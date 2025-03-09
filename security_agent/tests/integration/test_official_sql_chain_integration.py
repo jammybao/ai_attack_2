@@ -98,63 +98,63 @@ class TestOfficialSQLChainIntegration(unittest.TestCase):
         print(table_info[:1000] + "..." if len(table_info) > 1000 else table_info)
         print("=" * 80)
     
-    # def test_recent_high_threat_events(self):
-    #     """测试用例1: 查询最近24小时内高威胁等级的事件"""
-    #     logger.info("\n\n==== 测试用例1: 查询最近24小时内高威胁等级的事件 ====")
+    def test_recent_high_threat_events(self):
+        """测试用例1: 查询最近24小时内高威胁等级的事件"""
+        logger.info("\n\n==== 测试用例1: 查询最近24小时内高威胁等级的事件 ====")
         
-    #     # 构建查询
-    #     question = "查询最近24小时内威胁等级大于等于3的安全事件，按威胁等级降序排序"
-    #     print(f"\n问题: {question}")
+        # 构建查询
+        question = "查询最近24小时内威胁等级大于等于3的安全事件，按威胁等级降序排序"
+        print(f"\n问题: {question}")
         
-    #     # 生成SQL查询
-    #     raw_sql_query = self.sql_chain.generate_sql(question, ['ids_ai'])
+        # 生成SQL查询
+        raw_sql_query = self.sql_chain.generate_sql(question, ['ids_ai'])
         
-    #     # 提取实际的SQL语句
-    #     clean_sql = self.sql_chain._extract_sql(raw_sql_query)
-    #     self.current_sql = clean_sql  # 保存当前SQL以便格式化结果
+        # 提取实际的SQL语句
+        clean_sql = self.sql_chain._extract_sql(raw_sql_query)
+        self.current_sql = clean_sql  # 保存当前SQL以便格式化结果
         
-    #     # 打印SQL查询
-    #     print("\n生成的原始SQL查询:")
-    #     print("=" * 80)
-    #     print(raw_sql_query)
-    #     print("=" * 80)
+        # 打印SQL查询
+        print("\n生成的原始SQL查询:")
+        print("=" * 80)
+        print(raw_sql_query)
+        print("=" * 80)
         
-    #     print("\n提取后的SQL查询:")
-    #     print("=" * 80)
-    #     print(clean_sql)
-    #     print("=" * 80)
+        print("\n提取后的SQL查询:")
+        print("=" * 80)
+        print(clean_sql)
+        print("=" * 80)
         
-    #     # 验证SQL查询包含关键元素
-    #     self.assertIn("ids_ai", raw_sql_query)
-    #     self.assertIn("threat_level", raw_sql_query)
-    #     self.assertIn("event_time", raw_sql_query)
+        # 验证SQL查询包含关键元素
+        self.assertIn("ids_ai", raw_sql_query)
+        self.assertIn("threat_level", raw_sql_query)
+        self.assertIn("event_time", raw_sql_query)
         
-    #     # 执行SQL查询
-    #     try:
-    #         result = self.sql_chain.execute_sql(raw_sql_query)
+        # 执行SQL查询
+        try:
+            result = self.sql_chain.execute_sql(raw_sql_query)
             
-    #         # 格式化并显示结果
-    #         formatted_result = self.format_result(result)
-    #         print("\n查询结果:")
-    #         print("=" * 80)
-    #         print(formatted_result)
-    #         print("=" * 80)
+            # 格式化并显示结果
+            formatted_result = self.format_result(result)
+            print("\n查询结果:")
+            print("=" * 80)
+            print(formatted_result)
+            print("=" * 80)
             
-    #     except Exception as e:
-    #         logger.error(f"执行SQL查询失败: {e}")
-    #         self.fail(f"执行SQL查询失败: {e}")
+        except Exception as e:
+            logger.error(f"执行SQL查询失败: {e}")
+            self.fail(f"执行SQL查询失败: {e}")
         
-    #     # 查询并回答
-    #     try:
-    #         answer = self.sql_chain.query_and_answer(question, ['ids_ai'])
-    #         print("\n生成的回答:")
-    #         print("=" * 80)
-    #         print(answer)
-    #         print("=" * 80)
-    #         self.assertIsNotNone(answer)
-    #     except Exception as e:
-    #         logger.error(f"查询并回答失败: {e}")
-    #         self.fail(f"查询并回答失败: {e}")
+        # 查询并回答
+        try:
+            answer = self.sql_chain.query_and_answer(question, ['ids_ai'])
+            print("\n生成的回答:")
+            print("=" * 80)
+            print(answer)
+            print("=" * 80)
+            self.assertIsNotNone(answer)
+        except Exception as e:
+            logger.error(f"查询并回答失败: {e}")
+            self.fail(f"查询并回答失败: {e}")
     
     # def test_specific_attack_category(self):
     #     """测试用例2: 查询特定攻击类别的事件"""
@@ -397,68 +397,68 @@ class TestOfficialSQLChainIntegration(unittest.TestCase):
     #         logger.error(f"查询并回答失败: {e}")
     #         self.fail(f"查询并回答失败: {e}")
     
-    def test_vague_query(self):
-        """测试用例6: 模糊查询 - 处理不精确的自然语言问题"""
-        logger.info("\n\n==== 测试用例6: 模糊查询 - 前24小时有无网络攻击风险 ====")
+    # def test_vague_query(self):
+    #     """测试用例6: 模糊查询 - 处理不精确的自然语言问题"""
+    #     logger.info("\n\n==== 测试用例6: 模糊查询 - 前24小时有无网络攻击风险 ====")
         
-        # 构建模糊查询
-        question = "前24小时有无网络攻击风险"
-        print(f"\n问题: {question}")
+    #     # 构建模糊查询
+    #     question = "前24小时有无网络攻击风险"
+    #     print(f"\n问题: {question}")
         
-        # 生成SQL查询
-        raw_sql_query = self.sql_chain.generate_sql(question, ['ids_ai'])
+    #     # 生成SQL查询
+    #     raw_sql_query = self.sql_chain.generate_sql(question, ['ids_ai'])
         
-        # 提取实际的SQL语句
-        clean_sql = self.sql_chain._extract_sql(raw_sql_query)
-        self.current_sql = clean_sql  # 保存当前SQL以便格式化结果
+    #     # 提取实际的SQL语句
+    #     clean_sql = self.sql_chain._extract_sql(raw_sql_query)
+    #     self.current_sql = clean_sql  # 保存当前SQL以便格式化结果
         
-        # 打印SQL查询
-        print("\n生成的原始SQL查询:")
-        print("=" * 80)
-        print(raw_sql_query)
-        print("=" * 80)
+    #     # 打印SQL查询
+    #     print("\n生成的原始SQL查询:")
+    #     print("=" * 80)
+    #     print(raw_sql_query)
+    #     print("=" * 80)
         
-        print("\n提取后的SQL查询:")
-        print("=" * 80)
-        print(clean_sql)
-        print("=" * 80)
+    #     print("\n提取后的SQL查询:")
+    #     print("=" * 80)
+    #     print(clean_sql)
+    #     print("=" * 80)
         
-        # 验证SQL查询包含关键元素 - 对于模糊查询，我们期望至少包含时间和风险相关字段
-        self.assertIn("ids_ai", raw_sql_query)
-        self.assertIn("event_time", raw_sql_query)
+    #     # 验证SQL查询包含关键元素 - 对于模糊查询，我们期望至少包含时间和风险相关字段
+    #     self.assertIn("ids_ai", raw_sql_query)
+    #     self.assertIn("event_time", raw_sql_query)
         
-        # 执行SQL查询
-        try:
-            result = self.sql_chain.execute_sql(raw_sql_query)
+    #     # 执行SQL查询
+    #     try:
+    #         result = self.sql_chain.execute_sql(raw_sql_query)
             
-            # 格式化并显示结果
-            formatted_result = self.format_result(result)
-            print("\n查询结果:")
-            print("=" * 80)
-            print(formatted_result)
-            print("=" * 80)
+    #         # 格式化并显示结果
+    #         formatted_result = self.format_result(result)
+    #         print("\n查询结果:")
+    #         print("=" * 80)
+    #         print(formatted_result)
+    #         print("=" * 80)
             
-        except Exception as e:
-            logger.error(f"执行SQL查询失败: {e}")
-            self.fail(f"执行SQL查询失败: {e}")
+    #     except Exception as e:
+    #         logger.error(f"执行SQL查询失败: {e}")
+    #         self.fail(f"执行SQL查询失败: {e}")
         
-        # 查询并回答
-        try:
-            answer = self.sql_chain.query_and_answer(question, ['ids_ai'])
-            print("\n生成的回答:")
-            print("=" * 80)
-            print(answer)
-            print("=" * 80)
-            self.assertIsNotNone(answer)
+    #     # 查询并回答
+    #     try:
+    #         answer = self.sql_chain.query_and_answer(question, ['ids_ai'])
+    #         print("\n生成的回答:")
+    #         print("=" * 80)
+    #         print(answer)
+    #         print("=" * 80)
+    #         self.assertIsNotNone(answer)
             
-            # 验证回答中包含风险评估相关内容
-            risk_terms = ["风险", "攻击", "威胁", "安全", "事件"]
-            has_risk_term = any(term in answer for term in risk_terms)
-            self.assertTrue(has_risk_term, "回答中应包含风险评估相关内容")
+    #         # 验证回答中包含风险评估相关内容
+    #         risk_terms = ["风险", "攻击", "威胁", "安全", "事件"]
+    #         has_risk_term = any(term in answer for term in risk_terms)
+    #         self.assertTrue(has_risk_term, "回答中应包含风险评估相关内容")
             
-        except Exception as e:
-            logger.error(f"查询并回答失败: {e}")
-            self.fail(f"查询并回答失败: {e}")
+    #     except Exception as e:
+    #         logger.error(f"查询并回答失败: {e}")
+    #         self.fail(f"查询并回答失败: {e}")
         
         # # 额外测试：尝试更模糊的后续问题
         # follow_up_question = "这些攻击有多严重？"

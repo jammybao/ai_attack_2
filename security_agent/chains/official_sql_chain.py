@@ -147,11 +147,55 @@ class OfficialSQLChain:
             inputs["table_names_to_use"] = table_names
             
         try:
-            answer = self.query_and_answer_chain.invoke(inputs)
-            return answer
+            # 获取分析结果
+            analysis_result = self.query_and_answer_chain.invoke(inputs)
+            
+            # 如果结果是字典（结构化输出），则格式化为文本
+            if isinstance(analysis_result, dict):
+                # 如果SecurityAnalysisChain类中有format_analysis_result方法，则使用它
+                if hasattr(self.security_analysis_chain, 'format_analysis_result'):
+                    return self.security_analysis_chain.format_analysis_result(analysis_result)
+                # 否则使用本地的_format_analysis_result方法
+                return self._format_analysis_result(analysis_result)
+            
+            return analysis_result
         except Exception as e:
             logger.error(f"查询并回答失败: {e}")
             raise
+    
+    def _format_analysis_result(self, analysis: Dict[str, Any]) -> str:
+        """将结构化分析结果格式化为可读文本
+        
+        Args:
+            analysis: 结构化分析结果
+            
+        Returns:
+            格式化的分析文本
+        """
+        # 构建格式化输出
+        output = f"## 安全分析结果\n\n"
+        
+        # 添加风险等级
+        risk_level = analysis.get('risk_level', '未知')
+        output += f"**风险等级**: {risk_level}\n\n"
+        
+        # 添加关键发现
+        output += "### 关键发现\n\n"
+        for finding in analysis.get('key_findings', []):
+            output += f"- {finding}\n"
+        output += "\n"
+        
+        # 添加安全建议
+        output += "### 安全建议\n\n"
+        for recommendation in analysis.get('recommendations', []):
+            output += f"- {recommendation}\n"
+        output += "\n"
+        
+        # 添加详细分析
+        if analysis.get('details'):
+            output += f"### 详细分析\n\n{analysis.get('details')}\n"
+        
+        return output
     
     def get_table_info(self, table_names: Optional[List[str]] = None) -> str:
         """获取表信息
