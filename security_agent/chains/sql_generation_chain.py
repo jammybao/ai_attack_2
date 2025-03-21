@@ -173,6 +173,13 @@ class SQLGenerationChain:
         risk_terms = ["风险", "攻击", "威胁", "安全", "入侵", "异常", "可疑"]
         is_risk_query = any(term in question for term in risk_terms)
         
+        # 检测是否是高危告警查询
+        high_risk_terms = ["高危", "高风险", "严重", "紧急", "critical", "high"]
+        is_high_risk_query = any(term in question for term in high_risk_terms)
+        
+        # 基础增强提示，告诉模型不要添加LIMIT语句
+        enhanced = question + "，请不要在SQL查询中添加LIMIT语句，我需要查看所有匹配的结果"
+        
         if is_risk_query:
             # 检查问题是否已经包含字段信息
             field_terms = ["字段", "显示", "包含", "src_ip", "dst_ip", "threat_level", "源IP", "目标IP", "威胁等级"]
@@ -180,12 +187,14 @@ class SQLGenerationChain:
             
             if not has_field_info:
                 # 如果是模糊的风险查询且没有指定字段，增强问题以包含关键字段
-                enhanced = question
                 enhanced += "，请查询包含事件时间(event_time)、威胁等级(threat_level)、攻击类别(category)、源IP地址(src_ip)、目标IP地址(dst_ip)、攻击特征(signature)等关键安全信息"
-                logger.info(f"增强后的问题: {enhanced}")
-                return enhanced
+            
+            # 如果是高危告警查询，明确指定威胁等级阈值
+            if is_high_risk_query and "threat_level" not in enhanced:
+                enhanced += "，请确保查询条件中包含威胁等级(threat_level)>=30的条件，这是高危告警的定义标准"
         
-        return question
+        logger.info(f"增强后的问题: {enhanced}")
+        return enhanced
     
     def generate_sql(self, question: str, table_names: Optional[List[str]] = None) -> str:
         """生成SQL查询，并确保包含关键安全分析字段

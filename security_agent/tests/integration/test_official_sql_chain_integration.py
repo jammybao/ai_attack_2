@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 # 加载环境变量
-load_dotenv()
+load_dotenv(override=True)
 
 from security_agent.chains.official_sql_chain import OfficialSQLChain
 from security_agent.config import settings
@@ -61,7 +61,7 @@ class TestOfficialSQLChainIntegration(unittest.TestCase):
                     # 尝试推断列名
                     if len(parsed_result) > 0 and isinstance(parsed_result[0], tuple):
                         # 从查询中提取列名
-                        columns = self.sql_chain._extract_columns_from_query(self.current_sql)
+                        columns = self.sql_chain._extract_columns_from_query(self.current_sql) 
                         if not columns:
                             columns = [f"column_{i}" for i in range(len(parsed_result[0]))]
                         
@@ -103,7 +103,7 @@ class TestOfficialSQLChainIntegration(unittest.TestCase):
         logger.info("\n\n==== 测试用例1: 查询最近24小时内高威胁等级的事件 ====")
         
         # 构建查询
-        question = "查询最近24小时内威胁等级大于等于3的安全事件，按威胁等级降序排序"
+        question = "上一周高危报警的分析报告"
         print(f"\n问题: {question}")
         
         # 生成SQL查询
@@ -114,10 +114,10 @@ class TestOfficialSQLChainIntegration(unittest.TestCase):
         self.current_sql = clean_sql  # 保存当前SQL以便格式化结果
         
         # 打印SQL查询
-        print("\n生成的原始SQL查询:")
-        print("=" * 80)
-        print(raw_sql_query)
-        print("=" * 80)
+        # print("\n生成的原始SQL查询:")
+        # print("=" * 80)
+        # print(raw_sql_query)
+        # print("=" * 80)
         
         print("\n提取后的SQL查询:")
         print("=" * 80)
@@ -129,16 +129,21 @@ class TestOfficialSQLChainIntegration(unittest.TestCase):
         self.assertIn("threat_level", raw_sql_query)
         self.assertIn("event_time", raw_sql_query)
         
+        # 验证SQL查询中包含高危告警的定义（threat_level >= 30）
+        high_threat_conditions = ["threat_level >= 30", "threat_level > 30", "threat_level >= 40"]
+        has_high_threat_condition = any(condition in clean_sql for condition in high_threat_conditions)
+        self.assertTrue(has_high_threat_condition, "SQL查询应包含高危告警的定义（threat_level >= 30）")
+        
         # 执行SQL查询
         try:
             result = self.sql_chain.execute_sql(raw_sql_query)
             
             # 格式化并显示结果
             formatted_result = self.format_result(result)
-            print("\n查询结果:")
-            print("=" * 80)
-            print(formatted_result)
-            print("=" * 80)
+            # print("\n查询结果:")
+            # print("=" * 80)
+            # print(formatted_result)
+            # print("=" * 80)
             
         except Exception as e:
             logger.error(f"执行SQL查询失败: {e}")

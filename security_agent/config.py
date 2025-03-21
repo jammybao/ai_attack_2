@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     
     # 通义千问API配置
     TONGYI_API_KEY: str = ""  # 敏感信息，不设默认值，必须从环境变量获取
-    TONGYI_MODEL_NAME: str = "qwen-plus"  # 默认值
+    TONGYI_MODEL_NAME: str = "deepseek-r1"  # 默认值
     TONGYI_BASE_URL: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"  # 默认值
     
     # 数据库配置

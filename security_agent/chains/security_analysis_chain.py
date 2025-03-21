@@ -27,6 +27,14 @@ class SecurityAnalysisResult(BaseModel):
         description="安全建议，最多3项",
         max_items=3
     )
+    ip_analysis: Optional[str] = Field(
+        description="IP分析结果，包括攻击源IP和目标IP的特征分析",
+        default=None
+    )
+    ip_correlation: Optional[str] = Field(
+        description="多条日志间的IP关联性分析结果",
+        default=None
+    )
     details: Optional[str] = Field(
         description="简要分析详情，不超过200字",
         max_length=200
@@ -75,10 +83,10 @@ class SecurityAnalysisChain:
         """
         # 检查是否包含高风险指标
         high_risk_indicators = [
-            "threat_level > 3", 
-            "threat_level >= 4",
-            "威胁等级 > 3",
-            "威胁等级 >= 4"
+            "threat_level > 30", 
+            "threat_level >= 40",
+            "威胁等级 > 30",
+            "威胁等级 >= 40"
         ]
         
         if any(indicator in query for indicator in high_risk_indicators):
@@ -134,10 +142,12 @@ SQL查询: {query}
             # 根据查询内容动态添加分析维度
             if "src_ip" in query or "dst_ip" in query:
                 template += """- 网络流量：识别可能的攻击源IP和受害目标IP，检查异常通信模式
+- IP分析：分析攻击源IP的地理位置、信誉度和历史行为模式
+- IP关联性：分析多条日志中是否存在相同的攻击源IP或目标IP，识别可能的攻击活动关联
 """
             
             if "threat_level" in query:
-                template += """- 威胁评估：重点关注高威胁等级(4-5)事件，评估整体安全态势
+                template += """- 威胁评估：重点关注高威胁等级(30-40)事件，评估整体安全态势
 """
                 
             if "attack_step" in query or "attack_function" in query or "category" in query:
@@ -156,11 +166,19 @@ SQL查询: {query}
             # 中等复杂度查询 - 添加基本分析指导
             template = base_template + """请对数据进行中等深度分析，关注主要安全模式和趋势。
 重点识别潜在的安全风险，并提供针对性的安全建议。
+
+请务必包含以下分析：
+- IP分析：分析攻击源IP和目标IP的特征和行为模式
+- IP关联性：分析多条日志中是否存在相同的IP，识别可能的关联攻击活动
 """
         else:
             # 低复杂度查询 - 最简化的分析指导
             template = base_template + """请对数据进行简要分析，提取关键安全信息。
 如果数据不足以进行深入分析，请说明需要哪些额外信息。
+
+即使数据有限，也请尝试分析：
+- IP信息：任何可用的源IP和目标IP信息
+- 可能的关联性：数据中是否有任何IP关联模式
 """
             
         # 添加输出格式要求
@@ -169,6 +187,8 @@ SQL查询: {query}
 - risk_level: 整体风险等级("高"/"中"/"低"/"未知")
 - key_findings: 关键发现列表(最多3项)
 - recommendations: 安全建议列表(最多3项)
+- ip_analysis: IP分析结果，包括攻击源IP和目标IP的特征分析
+- ip_correlation: 多条日志间的IP关联性分析结果
 - details: 简要分析详情(不超过200字)
 
 确保分析简明扼要，避免冗余内容。
@@ -220,6 +240,18 @@ SQL查询: {query}
         """
         logger.info(f"分析安全数据，问题: {question}")
         
+        # 检查结果是否为空
+        if not result or result.strip() == "" or result.strip() == "[]" or result.strip() == "()":
+            logger.info("查询结果为空，返回无数据分析结果")
+            return {
+                "risk_level": "低",
+                "key_findings": ["查询未返回任何数据", "在指定条件下没有发现安全事件", "当前时间范围内没有符合条件的威胁"],
+                "recommendations": ["扩大查询时间范围", "降低威胁等级阈值", "检查数据收集系统是否正常工作"],
+                "ip_analysis": "无法进行IP分析，因为查询未返回任何数据。",
+                "ip_correlation": "无法进行IP关联性分析，因为查询未返回任何数据。",
+                "details": "在指定的查询条件下未发现任何安全事件。这可能表示在该时间范围内没有高威胁事件。"
+            }
+        
         inputs = {
             "question": question,
             "query": query,
@@ -238,6 +270,8 @@ SQL查询: {query}
                 "risk_level": "未知",
                 "key_findings": ["分析过程中发生错误"],
                 "recommendations": ["请检查数据并重试分析"],
+                "ip_analysis": "分析过程中发生错误，无法完成IP分析。",
+                "ip_correlation": "分析过程中发生错误，无法完成IP关联性分析。",
                 "details": f"错误信息: {str(e)[:100]}"
             }
     
@@ -265,6 +299,16 @@ SQL查询: {query}
         for recommendation in analysis.get('recommendations', []):
             output += f"- {recommendation}\n"
         output += "\n"
+        
+        # 添加IP分析
+        if analysis.get('ip_analysis'):
+            output += "### IP分析\n\n"
+            output += f"{analysis.get('ip_analysis')}\n\n"
+        
+        # 添加IP关联性分析
+        if analysis.get('ip_correlation'):
+            output += "### IP关联性分析\n\n"
+            output += f"{analysis.get('ip_correlation')}\n\n"
         
         # 添加详细分析
         if analysis.get('details'):
