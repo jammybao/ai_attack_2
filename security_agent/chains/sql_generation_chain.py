@@ -190,7 +190,7 @@ class SQLGenerationChain:
                 enhanced += "，请查询包含事件时间(event_time)、威胁等级(threat_level)、攻击类别(category)、源IP地址(src_ip)、目标IP地址(dst_ip)、攻击特征(signature)等关键安全信息"
             
             # 如果是高危告警查询，明确指定威胁等级阈值
-            if is_high_risk_query and "threat_level" not in enhanced:
+            if is_high_risk_query:
                 enhanced += "，请确保查询条件中包含威胁等级(threat_level)>=30的条件，这是高危告警的定义标准"
         
         logger.info(f"增强后的问题: {enhanced}")
@@ -218,6 +218,34 @@ class SQLGenerationChain:
         try:
             sql_query = self.sql_chain.invoke(inputs)
             logger.info(f"SQL查询生成成功: {sql_query[:100]}...")
+            
+            # 检查是否是高危告警查询，直接修改生成的SQL
+            high_risk_terms = ["高危", "高风险", "严重", "紧急", "critical", "high"]
+            is_high_risk_query = any(term in question for term in high_risk_terms)
+            
+            if is_high_risk_query:
+                # 提取SQL语句
+                clean_sql = self._extract_sql(sql_query)
+                
+                # 检查是否已包含高危告警条件
+                high_threat_conditions = ["threat_level >= 30", "threat_level > 30", "threat_level >= 40"]
+                has_high_threat_condition = any(condition in clean_sql for condition in high_threat_conditions)
+                
+                if not has_high_threat_condition:
+                    # 如果不包含，添加高危条件
+                    if "WHERE" in clean_sql:
+                        # 已有WHERE子句，添加AND条件
+                        modified_sql = clean_sql.replace("WHERE", "WHERE threat_level >= 30 AND ")
+                    else:
+                        # 没有WHERE子句，添加新的WHERE子句
+                        modified_sql = clean_sql + " WHERE threat_level >= 30"
+                    
+                    # 将修改后的SQL放回原始响应格式
+                    if "```sql" in sql_query:
+                        sql_query = sql_query.replace(clean_sql, modified_sql)
+                    else:
+                        sql_query = modified_sql
+            
             return sql_query
         except Exception as e:
             logger.error(f"SQL查询生成失败: {e}")

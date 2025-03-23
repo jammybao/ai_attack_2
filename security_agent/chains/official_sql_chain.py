@@ -3,7 +3,7 @@
 整合SQL生成链和安全分析链
 """
 import logging
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Tuple
 
 from langchain_core.runnables import RunnablePassthrough
 
@@ -215,3 +215,27 @@ class OfficialSQLChain:
             可用表名列表
         """
         return self.sql_generation_chain.get_usable_table_names()
+
+    def query_database(self, question: str, table_names: Optional[List[str]] = None) -> Tuple[str, str]:
+        """查询数据库，返回SQL查询和结果
+        
+        Args:
+            question: 用户问题
+            table_names: 要使用的表名列表
+        
+        Returns:
+            包含SQL查询和结果的元组
+        """
+        logger.info(f"查询数据库，问题: {question}")
+        
+        try:
+            # 生成SQL查询
+            sql_query = self.generate_sql(question, table_names)
+            
+            # 执行SQL查询
+            result = self.execute_sql(sql_query)
+            
+            return sql_query, result
+        except Exception as e:
+            logger.error(f"查询数据库失败: {e}")
+            raise
