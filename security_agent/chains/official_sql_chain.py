@@ -21,7 +21,8 @@ class OfficialSQLChain:
         db_connection: str,
         model_name: str = "qwen-plus", 
         base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1",
-        temperature: float = 0
+        temperature: float = 0,
+        ml_chain = None
     ):
         """初始化官方SQL查询链
         
@@ -31,6 +32,7 @@ class OfficialSQLChain:
             model_name: 模型名称
             base_url: API基础URL
             temperature: 温度参数
+            ml_chain: 机器学习安全链实例，可选
         """
         logger.info("初始化官方SQL查询链")
         
@@ -48,8 +50,15 @@ class OfficialSQLChain:
             api_key=api_key,
             model_name=model_name,
             base_url=base_url,
-            temperature=temperature
+            temperature=temperature,
+            ml_chain=ml_chain
         )
+        
+        # 保存机器学习链引用
+        self.ml_chain = ml_chain
+        
+        # 最后一次分析是否使用了机器学习增强
+        self.last_ml_enhanced = False
         
         # 创建完整的查询和回答链
         self.query_and_answer_chain = self._create_query_and_answer_chain()
@@ -130,38 +139,62 @@ class OfficialSQLChain:
         """
         return self.sql_generation_chain.execute_sql(sql_query)
     
-    def query_and_answer(self, question: str, table_names: Optional[List[str]] = None) -> str:
-        """查询并回答
+    def query_and_answer(
+        self, 
+        question: str, 
+        use_ml: bool = True
+    ) -> Dict[str, Any]:
+        """执行查询并返回结果和安全分析
         
         Args:
             question: 用户问题
-            table_names: 要使用的表名列表
-        
+            use_ml: 是否使用机器学习安全分析
+            
         Returns:
-            回答
+            包含查询、结果和安全分析的字典
         """
-        logger.info(f"查询并回答，问题: {question}")
+        logger.info(f"执行查询: {question}")
         
-        inputs = {"question": question}
-        if table_names:
-            inputs["table_names_to_use"] = table_names
-            
+        # 步骤1: 生成SQL查询
+        sql_query = self.generate_sql(question)
+        logger.info(f"生成的SQL查询: {sql_query}")
+        
+        # 步骤2: 执行查询
+        result = None
         try:
-            # 获取分析结果
-            analysis_result = self.query_and_answer_chain.invoke(inputs)
-            
-            # 如果结果是字典（结构化输出），则格式化为文本
-            if isinstance(analysis_result, dict):
-                # 如果SecurityAnalysisChain类中有format_analysis_result方法，则使用它
-                if hasattr(self.security_analysis_chain, 'format_analysis_result'):
-                    return self.security_analysis_chain.format_analysis_result(analysis_result)
-                # 否则使用本地的_format_analysis_result方法
-                return self._format_analysis_result(analysis_result)
-            
-            return analysis_result
+            result = self.execute_sql(sql_query)
+            logger.info("SQL查询执行成功")
         except Exception as e:
-            logger.error(f"查询并回答失败: {e}")
-            raise
+            logger.error(f"SQL查询执行失败: {e}")
+            result = f"查询执行失败: {str(e)}"
+        
+        # 步骤3: 安全分析
+        security_analysis = None
+        try:
+            if self.security_analysis_chain:
+                security_analysis = self.security_analysis_chain.analyze(
+                    question=question,
+                    sql_query=sql_query,
+                    sql_result=result,
+                    use_ml=use_ml and self.ml_chain is not None
+                )
+                logger.info("安全分析完成")
+        except Exception as e:
+            logger.error(f"安全分析失败: {e}")
+            security_analysis = {
+                "error": f"安全分析失败: {str(e)}",
+                "risk_level": "未知"
+            }
+        
+        # 构建返回结果
+        answer = {
+            "question": question,
+            "sql_query": sql_query,
+            "sql_result": result,
+            "security_analysis": security_analysis
+        }
+        
+        return answer
     
     def _format_analysis_result(self, analysis: Dict[str, Any]) -> str:
         """将结构化分析结果格式化为可读文本

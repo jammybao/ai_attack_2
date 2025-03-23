@@ -1,0 +1,49 @@
+Python-dotenv could not parse statement starting at line 1
+Python-dotenv could not parse statement starting at line 4
+Python-dotenv could not parse statement starting at line 5
+Python-dotenv could not parse statement starting at line 6
+Python-dotenv could not parse statement starting at line 7
+Python-dotenv could not parse statement starting at line 8
+Python-dotenv could not parse statement starting at line 1
+Python-dotenv could not parse statement starting at line 4
+Python-dotenv could not parse statement starting at line 5
+Python-dotenv could not parse statement starting at line 6
+Python-dotenv could not parse statement starting at line 7
+Python-dotenv could not parse statement starting at line 8
+Python-dotenv could not parse statement starting at line 1
+Python-dotenv could not parse statement starting at line 4
+Python-dotenv could not parse statement starting at line 5
+Python-dotenv could not parse statement starting at line 6
+Python-dotenv could not parse statement starting at line 7
+Python-dotenv could not parse statement starting at line 8
+INFO:     Will watch for changes in these directories: ['E:\\python_project\\ai_attack - 副本']
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+INFO:     Started reloader process [32448] using StatReload
+Python-dotenv could not parse statement starting at line 1
+Python-dotenv could not parse statement starting at line 4
+Python-dotenv could not parse statement starting at line 5
+Python-dotenv could not parse statement starting at line 6
+Python-dotenv could not parse statement starting at line 7
+Python-dotenv could not parse statement starting at line 8
+Python-dotenv could not parse statement starting at line 1
+Python-dotenv could not parse statement starting at line 4
+Python-dotenv could not parse statement starting at line 5
+Python-dotenv could not parse statement starting at line 6
+Python-dotenv could not parse statement starting at line 7
+Python-dotenv could not parse statement starting at line 8
+Python-dotenv could not parse statement starting at line 1
+Python-dotenv could not parse statement starting at line 4
+Python-dotenv could not parse statement starting at line 5
+Python-dotenv could not parse statement starting at line 6
+Python-dotenv could not parse statement starting at line 7
+Python-dotenv could not parse statement starting at line 8
+Python-dotenv could not parse statement starting at line 1
+Python-dotenv could not parse statement starting at line 4
+Python-dotenv could not parse statement starting at line 5
+Python-dotenv could not parse statement starting at line 6
+Python-dotenv could not parse statement starting at line 7
+Python-dotenv could not parse statement starting at line 8
+INFO:     Started server process [35512]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+WARNING:  StatReload detected changes in 'test_request_api.py'. Reloading...

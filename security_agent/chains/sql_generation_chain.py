@@ -177,6 +177,10 @@ class SQLGenerationChain:
         high_risk_terms = ["高危", "高风险", "严重", "紧急", "critical", "high"]
         is_high_risk_query = any(term in question for term in high_risk_terms)
         
+        # 检测是否涉及IP分析
+        ip_terms = ["ip", "IP", "源地址", "目标地址", "src_ip", "dst_ip", "source_ip", "destination_ip"]
+        is_ip_query = any(term in question for term in ip_terms)
+        
         # 基础增强提示，告诉模型不要添加LIMIT语句
         enhanced = question + "，请不要在SQL查询中添加LIMIT语句，我需要查看所有匹配的结果"
         
@@ -192,6 +196,10 @@ class SQLGenerationChain:
             # 如果是高危告警查询，明确指定威胁等级阈值
             if is_high_risk_query:
                 enhanced += "，请确保查询条件中包含威胁等级(threat_level)>=30的条件，这是高危告警的定义标准"
+        
+        # 如果查询涉及IP分析，添加与ip_address表的关联
+        if is_ip_query:
+            enhanced += "，并且请使用LEFT JOIN关联ip_address表，以提供IP的network_type信息，这对区分内外部IP很重要。对于源IP，使用LEFT JOIN ip_address ON security_logs.src_ip = ip_address.ip，并在结果中包含ip_address.network_type字段"
         
         logger.info(f"增强后的问题: {enhanced}")
         return enhanced
@@ -213,6 +221,10 @@ class SQLGenerationChain:
         
         inputs = {"question": enhanced_question}
         if table_names:
+            # 确保ip_address表在表名列表中，如果涉及IP分析
+            if any(term in question.lower() for term in ["ip", "源ip", "目标ip", "内部", "外部", "入侵"]):
+                if "ip_address" not in table_names:
+                    table_names.append("ip_address")
             inputs["table_names_to_use"] = table_names
             
         try:
@@ -246,10 +258,78 @@ class SQLGenerationChain:
                     else:
                         sql_query = modified_sql
             
+            # 检查是否涉及IP分析但没有关联ip_address表
+            ip_related = any(term in question.lower() for term in ["ip", "源ip", "目标ip", "内部", "外部", "入侵"])
+            clean_sql = self._extract_sql(sql_query)
+            
+            if ip_related and "ip_address" not in clean_sql and ("src_ip" in clean_sql or "source_ip" in clean_sql):
+                # 需要添加与ip_address表的关联
+                modified_sql = self._add_ip_address_join(clean_sql)
+                
+                # 将修改后的SQL放回原始响应格式
+                if "```sql" in sql_query:
+                    sql_query = sql_query.replace(clean_sql, modified_sql)
+                else:
+                    sql_query = modified_sql
+            
             return sql_query
         except Exception as e:
             logger.error(f"SQL查询生成失败: {e}")
             raise
+    
+    def _add_ip_address_join(self, sql: str) -> str:
+        """添加与ip_address表的关联查询
+        
+        Args:
+            sql: 原始SQL查询
+            
+        Returns:
+            添加了ip_address表关联的SQL查询
+        """
+        # 检查是否已经包含ip_address表
+        if "ip_address" in sql:
+            return sql
+            
+        # 提取SELECT和FROM部分
+        select_pattern = r"(SELECT\s+)(.*?)(\s+FROM\s+)(.*?)(\s+WHERE|\s+GROUP BY|\s+ORDER BY|\s*$)"
+        match = re.search(select_pattern, sql, re.IGNORECASE | re.DOTALL)
+        
+        if not match:
+            return sql
+            
+        select_keyword = match.group(1)
+        select_fields = match.group(2)
+        from_keyword = match.group(3)
+        from_tables = match.group(4)
+        rest_of_query = match.group(5)
+        
+        # 判断主表名
+        main_table = from_tables.strip()
+        table_alias = ""
+        
+        # 检查是否有表别名
+        if " as " in main_table.lower() or " " in main_table:
+            parts = re.split(r"\s+as\s+|\s+", main_table, 1, re.IGNORECASE)
+            main_table = parts[0]
+            table_alias = parts[1] if len(parts) > 1 else ""
+        
+        # 添加network_type字段到SELECT部分
+        if select_fields.strip() == "*":
+            # 处理SELECT *的情况
+            select_fields = f"{main_table}.*, src_ip_info.network_type AS src_network_type, dst_ip_info.network_type AS dst_network_type"
+        else:
+            # 添加到已有字段后面
+            select_fields = f"{select_fields}, src_ip_info.network_type AS src_network_type, dst_ip_info.network_type AS dst_network_type"
+        
+        # 构建新的FROM部分，添加LEFT JOIN
+        prefix = table_alias if table_alias else main_table
+        new_from = f"{from_tables} LEFT JOIN ip_address AS src_ip_info ON {prefix}.src_ip = src_ip_info.ip LEFT JOIN ip_address AS dst_ip_info ON {prefix}.dst_ip = dst_ip_info.ip"
+        
+        # 重建SQL查询
+        modified_sql = f"{select_keyword}{select_fields}{from_keyword}{new_from}{rest_of_query}"
+        
+        logger.info(f"添加了ip_address表关联的SQL: {modified_sql[:100]}...")
+        return modified_sql
     
     def execute_sql(self, sql_query: str) -> str:
         """执行SQL查询

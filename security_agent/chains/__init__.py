@@ -12,10 +12,12 @@ FilePath: \security_agent\chains\__init__.py
 from security_agent.chains.official_sql_chain import OfficialSQLChain
 from security_agent.chains.sql_generation_chain import SQLGenerationChain
 from security_agent.chains.security_analysis_chain import SecurityAnalysisChain
+from security_agent.chains.ml_security_chain import MLSecurityChain
 
 
 __all__ = [
     "OfficialSQLChain",
     "SQLGenerationChain",
-    "SecurityAnalysisChain"
+    "SecurityAnalysisChain",
+    "MLSecurityChain"
 ] 

@@ -8,4 +8,19 @@ FilePath: \security_agent\models\__init__.py
 '''
 """
 数据模型包
-""" 
+"""
+from security_agent.models.security_log import SecurityLog
+from security_agent.models.ml_models import (
+    BaseMLModel,
+    AnomalyDetectionModel,
+    IPReputationModel,
+    AttackChainModel
+)
+
+__all__ = [
+    "SecurityLog",
+    "BaseMLModel",
+    "AnomalyDetectionModel",
+    "IPReputationModel",
+    "AttackChainModel"
+] 
