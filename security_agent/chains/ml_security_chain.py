@@ -158,7 +158,8 @@ class MLSecurityChain:
                 "anomaly_count": 0,
                 "anomaly_percentage": 0,
                 "avg_anomaly_score": 0,
-                "top_anomalies": []
+                "top_anomalies": [],
+                "anomaly_samples": []
             }
         
         # 设置要使用的数值特征
@@ -175,7 +176,8 @@ class MLSecurityChain:
                 "anomaly_count": 0,
                 "anomaly_percentage": 0,
                 "avg_anomaly_score": 0,
-                "top_anomalies": []
+                "top_anomalies": [],
+                "anomaly_samples": []
             }
             
         # 确保所有特征列都是数值类型
@@ -196,7 +198,8 @@ class MLSecurityChain:
                 "anomaly_count": 0,
                 "anomaly_percentage": 0,
                 "avg_anomaly_score": 0,
-                "top_anomalies": []
+                "top_anomalies": [],
+                "anomaly_samples": []
             }
             
         try:
@@ -275,7 +278,8 @@ class MLSecurityChain:
                 "anomaly_count": anomaly_count,
                 "anomaly_percentage": anomaly_percentage,
                 "avg_anomaly_score": avg_anomaly_score,
-                "top_anomalies": top_anomalies
+                "top_anomalies": top_anomalies,
+                "anomaly_samples": [str(anomaly) for anomaly in top_anomalies[:1]] if top_anomalies else []
             }
             
         except Exception as e:
@@ -286,7 +290,8 @@ class MLSecurityChain:
                 "anomaly_count": 0,
                 "anomaly_percentage": 0,
                 "avg_anomaly_score": 0,
-                "top_anomalies": []
+                "top_anomalies": [],
+                "anomaly_samples": []
             }
     
     def analyze_ip_reputation(self, data: pd.DataFrame) -> Dict[str, Any]:
@@ -360,8 +365,9 @@ class MLSecurityChain:
                     ip_data = data[data[src_ip_col] == ip]
                     network_types = ip_data[src_network_type_col].unique()
                     
-                    # 如果任一记录中network_type不为空，则认为是内部IP
-                    if any(nt for nt in network_types if pd.notna(nt)):
+                    # 修改为：只有network_type为NULL才是外部IP
+                    # 如果任一记录中network_type不为NULL，则认为是内部IP
+                    if any(pd.notna(nt) for nt in network_types):
                         internal_src_ips.append((ip, ip_scores.get(ip, 50), list(set(nt for nt in network_types if pd.notna(nt)))))
                     else:
                         external_src_ips.append((ip, ip_scores.get(ip, 50)))
@@ -375,8 +381,9 @@ class MLSecurityChain:
                     ip_data = data[data[dst_ip_col] == ip]
                     network_types = ip_data[dst_network_type_col].unique()
                     
-                    # 如果任一记录中network_type不为空，则认为是内部IP
-                    if any(nt for nt in network_types if pd.notna(nt)):
+                    # 修改为：只有network_type为NULL才是外部IP
+                    # 如果任一记录中network_type不为NULL，则认为是内部IP
+                    if any(pd.notna(nt) for nt in network_types):
                         internal_dst_ips.append((ip, ip_scores.get(ip, 50), list(set(nt for nt in network_types if pd.notna(nt)))))
                     else:
                         external_dst_ips.append((ip, ip_scores.get(ip, 50)))
@@ -669,43 +676,61 @@ class MLSecurityChain:
         # 增强风险等级评估
         risk_level_score = 0
         
-        # 基于异常检测增强风险等级
-        if anomaly_results["anomaly_found"]:
-            # 根据异常百分比和平均分数调整风险等级
-            anomaly_factor = min(anomaly_results["anomaly_percentage"] / 10, 1.0)
-            score_factor = min(anomaly_results["avg_anomaly_score"] / 100, 1.0)
-            risk_level_score += 30 * anomaly_factor * score_factor
-            
-        # 基于IP信誉增强风险等级
-        if ip_reputation_results["suspicious_ips_found"]:
-            # 为外部可疑IP分配更高权重
-            external_suspicious_src_count = sum(1 for ip, _ in ip_reputation_results["suspicious_src_ips"] if any(ext_ip[0] == ip for ext_ip in ip_reputation_results["external_src_ips"]))
-            external_suspicious_dst_count = sum(1 for ip, _ in ip_reputation_results["suspicious_dst_ips"] if any(ext_ip[0] == ip for ext_ip in ip_reputation_results["external_dst_ips"]))
-            
-            # 内部可疑IP计数
-            internal_suspicious_src_count = len(ip_reputation_results["suspicious_src_ips"]) - external_suspicious_src_count
-            internal_suspicious_dst_count = len(ip_reputation_results["suspicious_dst_ips"]) - external_suspicious_dst_count
-            
-            # 外部IP权重更高
-            external_weight = 2.0
-            internal_weight = 0.5
-            
-            total_weighted_count = (external_suspicious_src_count + external_suspicious_dst_count) * external_weight + \
-                                  (internal_suspicious_src_count + internal_suspicious_dst_count) * internal_weight
-            
-            ip_factor = min(total_weighted_count / 6, 1.0)  # 调整分母以平衡权重
-            risk_level_score += 40 * ip_factor
-            
-        # 基于攻击模式预测增强风险等级
-        if attack_pattern_results["attack_patterns_found"]:
-            # 获取最高概率的攻击类型
-            top_attack_probs = attack_pattern_results["attack_probabilities"]
-            if top_attack_probs and top_attack_probs[0][1] > 0.7:  # 如果最高概率超过70%
-                risk_level_score += 30
+        # 检查是否存在外部IP
+        has_external_ips = bool(ip_reputation_results.get("external_src_ips", []) or 
+                             ip_reputation_results.get("external_dst_ips", []))
+        
+        # 如果存在外部IP，直接将风险评级设为最高
+        if has_external_ips:
+            risk_level_score = 100  # 设置为最大值，确保风险等级为"高"
+        else:
+            # 基于异常检测增强风险等级
+            if anomaly_results["anomaly_found"]:
+                # 根据异常百分比和平均分数调整风险等级
+                anomaly_factor = min(anomaly_results["anomaly_percentage"] / 10, 1.0)
+                score_factor = min(anomaly_results["avg_anomaly_score"] / 100, 1.0)
+                risk_level_score += 30 * anomaly_factor * score_factor
                 
+            # 基于IP信誉增强风险等级
+            if ip_reputation_results["suspicious_ips_found"]:
+                # 为外部可疑IP分配更高权重
+                external_suspicious_src_count = sum(1 for ip, _ in ip_reputation_results["suspicious_src_ips"] if any(ext_ip[0] == ip for ext_ip in ip_reputation_results["external_src_ips"]))
+                external_suspicious_dst_count = sum(1 for ip, _ in ip_reputation_results["suspicious_dst_ips"] if any(ext_ip[0] == ip for ext_ip in ip_reputation_results["external_dst_ips"]))
+                
+                # 内部可疑IP计数
+                internal_suspicious_src_count = len(ip_reputation_results["suspicious_src_ips"]) - external_suspicious_src_count
+                internal_suspicious_dst_count = len(ip_reputation_results["suspicious_dst_ips"]) - external_suspicious_dst_count
+                
+                # 外部IP权重更高
+                external_weight = 2.0
+                internal_weight = 0.5
+                
+                total_weighted_count = (external_suspicious_src_count + external_suspicious_dst_count) * external_weight + \
+                                    (internal_suspicious_src_count + internal_suspicious_dst_count) * internal_weight
+                
+                ip_factor = min(total_weighted_count / 6, 1.0)  # 调整分母以平衡权重
+                risk_level_score += 40 * ip_factor
+                
+            # 基于攻击模式预测增强风险等级
+            if attack_pattern_results["attack_patterns_found"]:
+                # 获取最高概率的攻击类型
+                top_attack_probs = attack_pattern_results["attack_probabilities"]
+                if top_attack_probs and top_attack_probs[0][1] > 0.7:  # 如果最高概率超过70%
+                    risk_level_score += 30
+        
         # 更新风险等级
         original_risk_level = enhanced_analysis.get("risk_level", "未知")
-        if risk_level_score > 60:
+        
+        # 如果存在外部IP，直接将风险等级设为"高"
+        if has_external_ips:
+            enhanced_analysis["risk_level"] = "高"
+            # 添加外部IP发现的关键信息
+            external_ip_count = len(ip_reputation_results.get("external_src_ips", [])) + len(ip_reputation_results.get("external_dst_ips", []))
+            enhanced_analysis["key_findings"] = enhanced_analysis.get("key_findings", [])
+            external_ip_finding = f"发现{external_ip_count}个外部IP，存在潜在安全风险"
+            if external_ip_finding not in enhanced_analysis["key_findings"]:
+                enhanced_analysis["key_findings"].insert(0, external_ip_finding)
+        elif risk_level_score > 60:
             enhanced_analysis["risk_level"] = "高"
         elif risk_level_score > 30:
             enhanced_analysis["risk_level"] = "中"
@@ -798,9 +823,27 @@ class MLSecurityChain:
         # 添加机器学习分析详情
         ml_details = ""
         
-        if anomaly_results["anomaly_found"]:
-            ml_details += f"异常检测: 发现{anomaly_results['anomaly_count']}条异常记录，平均异常分数{anomaly_results['avg_anomaly_score']:.1f}。"
+        # 添加外部IP警告（如果存在）
+        if has_external_ips:
+            external_src_count = len(ip_reputation_results.get("external_src_ips", []))
+            external_dst_count = len(ip_reputation_results.get("external_dst_ips", []))
             
+            ml_details += f"⚠️ 外部IP警告: 检测到{external_src_count}个外部源IP和{external_dst_count}个外部目标IP。外部IP通信可能表示潜在的攻击行为，需要立即调查。\n\n"
+            
+            # 添加外部可疑IP信息
+            external_suspicious_src_count = sum(1 for ip, _ in ip_reputation_results.get("suspicious_src_ips", []) if any(ext_ip[0] == ip for ext_ip in ip_reputation_results.get("external_src_ips", [])))
+            external_suspicious_dst_count = sum(1 for ip, _ in ip_reputation_results.get("suspicious_dst_ips", []) if any(ext_ip[0] == ip for ext_ip in ip_reputation_results.get("external_dst_ips", [])))
+            
+            if external_suspicious_src_count + external_suspicious_dst_count > 0:
+                ml_details += f"发现{external_suspicious_src_count + external_suspicious_dst_count}个可疑外部IP，为高风险威胁。\n\n"
+        
+        if anomaly_results["anomaly_found"]:
+            ml_details += f"异常检测: 发现{anomaly_results['anomaly_count']}条异常记录，占比{anomaly_results['anomaly_percentage']:.1f}%，平均异常分数{anomaly_results['avg_anomaly_score']:.1f}。"
+            
+            # 添加异常样本前先检查异常样本字段是否存在且不为空
+            if "anomaly_samples" in anomaly_results and anomaly_results.get("anomaly_samples") and len(anomaly_results["anomaly_samples"]) > 0:
+                ml_details += f" 样本异常记录: {anomaly_results['anomaly_samples'][0]}"
+                
         if ip_reputation_results["suspicious_ips_found"]:
             # 分别描述内外部IP情况
             external_src_count = len(ip_reputation_results["external_src_ips"])
@@ -808,15 +851,17 @@ class MLSecurityChain:
             external_dst_count = len(ip_reputation_results["external_dst_ips"])
             internal_dst_count = len(ip_reputation_results["internal_dst_ips"])
             
-            ml_details += f"IP分析: 识别到{external_src_count}个外部源IP和{internal_src_count}个内部源IP，"
-            ml_details += f"{external_dst_count}个外部目标IP和{internal_dst_count}个内部目标IP。"
-            
-            # 添加可疑IP统计
-            external_suspicious_src_count = sum(1 for ip, _ in ip_reputation_results["suspicious_src_ips"] if any(ext_ip[0] == ip for ext_ip in ip_reputation_results["external_src_ips"]))
-            external_suspicious_dst_count = sum(1 for ip, _ in ip_reputation_results["suspicious_dst_ips"] if any(ext_ip[0] == ip for ext_ip in ip_reputation_results["external_dst_ips"]))
-            
-            if external_suspicious_src_count + external_suspicious_dst_count > 0:
-                ml_details += f"其中发现{external_suspicious_src_count + external_suspicious_dst_count}个可疑外部IP，需特别关注。"
+            # 如果上面已经添加了外部IP警告，这里就不重复描述外部IP了
+            if not has_external_ips:
+                ml_details += f"IP分析: 识别到{external_src_count}个外部源IP和{internal_src_count}个内部源IP，"
+                ml_details += f"{external_dst_count}个外部目标IP和{internal_dst_count}个内部目标IP。"
+                
+                # 添加可疑IP统计
+                external_suspicious_src_count = sum(1 for ip, _ in ip_reputation_results["suspicious_src_ips"] if any(ext_ip[0] == ip for ext_ip in ip_reputation_results["external_src_ips"]))
+                external_suspicious_dst_count = sum(1 for ip, _ in ip_reputation_results["suspicious_dst_ips"] if any(ext_ip[0] == ip for ext_ip in ip_reputation_results["external_dst_ips"]))
+                
+                if external_suspicious_src_count + external_suspicious_dst_count > 0:
+                    ml_details += f"其中发现{external_suspicious_src_count + external_suspicious_dst_count}个可疑外部IP，需特别关注。"
             
         if attack_pattern_results["attack_patterns_found"]:
             top_attack = attack_pattern_results["attack_probabilities"][0] if attack_pattern_results["attack_probabilities"] else None

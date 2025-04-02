@@ -1,0 +1,17 @@
+# 环境变量文件
+.env
+
+# Python相关
+__pycache__/
+*.py[cod]
+*.so
+build/
+dist/
+*.egg-info/
+.pytest_cache/
+# 数据库文件
+*.db
+*.sqlite
+
+# 日志文件
+*.log

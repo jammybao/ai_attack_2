@@ -276,13 +276,17 @@ SQL查询: {query}
         ip_network_map = {}
         if ip_network_matches:
             for ip, network_type in ip_network_matches:
-                # 根据新需求：只要IP在ip_address表中存在(即有network_type值，即使为NULL)，就视为内部IP
-                ip_network_map[ip] = network_type if network_type and network_type.lower() != 'null' and network_type.lower() != 'none' else "未指定网络类型"
-                internal_ips.append((ip, ip_network_map[ip]))
+                # 修改判断逻辑：只有当network_type不为NULL和空值时，才视为内部IP
+                if network_type and network_type.lower() not in ['null', 'none', '']:
+                    ip_network_map[ip] = network_type
+                    internal_ips.append((ip, network_type))
+                else:
+                    # network_type为NULL的IP视为外部IP
+                    external_ips.append(ip)
                 
             # 将未在映射中的IP视为外部IP（这些是不在ip_address表中的IP）
             for ip in ip_counts:
-                if ip not in ip_network_map:
+                if ip not in ip_network_map and ip not in external_ips:
                     external_ips.append(ip)
         else:
             # 如果没有网络类型信息，则将所有IP视为外部IP
@@ -360,12 +364,19 @@ SQL查询: {query}
             
             analysis_result["ip_analysis"] = ip_text
             
-            # 如果外部IP较多，增加风险评级
-            external_ip_ratio = len(ip_analysis["external_ips"]) / (len(ip_analysis["unique_ips"]) or 1)
-            if external_ip_ratio > 0.7 and len(ip_analysis["external_ips"]) > 3:
-                analysis_result["risk_level"] = "中"
-                analysis_result["key_findings"].append(f"发现大量外部IP({len(ip_analysis['external_ips'])}个)，可能存在外部通信")
-                analysis_result["recommendations"].append("建议审查外部IP通信记录，确认是否为授权通信")
+            # 修改风险评级逻辑：若存在外部IP，直接将风险等级设置为"高"
+            if ip_analysis["external_ips"]:
+                analysis_result["risk_level"] = "高"
+                analysis_result["key_findings"].append(f"发现外部IP({len(ip_analysis['external_ips'])}个)，存在潜在安全风险")
+                analysis_result["recommendations"].append("立即审查外部IP通信记录，确认是否为授权通信或存在攻击行为")
+            # 保留原有逻辑作为补充
+            else:
+                # 如果外部IP较多，增加风险评级
+                external_ip_ratio = len(ip_analysis["external_ips"]) / (len(ip_analysis["unique_ips"]) or 1)
+                if external_ip_ratio > 0.7 and len(ip_analysis["external_ips"]) > 3:
+                    analysis_result["risk_level"] = "中"
+                    analysis_result["key_findings"].append(f"发现大量外部IP({len(ip_analysis['external_ips'])}个)，可能存在外部通信")
+                    analysis_result["recommendations"].append("建议审查外部IP通信记录，确认是否为授权通信")
         
         # 其他基础分析...
         if "error" in sql_result.lower() or "exception" in sql_result.lower():

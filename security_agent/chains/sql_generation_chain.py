@@ -181,6 +181,10 @@ class SQLGenerationChain:
         ip_terms = ["ip", "IP", "源地址", "目标地址", "src_ip", "dst_ip", "source_ip", "destination_ip"]
         is_ip_query = any(term in question for term in ip_terms)
         
+        # 检测是否特别关注外部IP
+        external_ip_terms = ["外部", "外网", "external", "外部IP", "外网IP"]
+        focus_on_external_ip = any(term in question for term in external_ip_terms)
+        
         # 基础增强提示，告诉模型不要添加LIMIT语句
         enhanced = question + "，请不要在SQL查询中添加LIMIT语句，我需要查看所有匹配的结果"
         
@@ -200,6 +204,10 @@ class SQLGenerationChain:
         # 如果查询涉及IP分析，添加与ip_address表的关联
         if is_ip_query:
             enhanced += "，并且请使用LEFT JOIN关联ip_address表，以提供IP的network_type信息，这对区分内外部IP很重要。对于源IP，使用LEFT JOIN ip_address ON security_logs.src_ip = ip_address.ip，并在结果中包含ip_address.network_type字段"
+            
+            # 如果特别关注外部IP，提供明确的外部IP判断条件
+            if focus_on_external_ip:
+                enhanced += "。请注意，外部IP的判断条件是ip_address.network_type IS NULL，不是network_type不等于某个特定值。当查询外部IP时，请在WHERE条件中使用ip_address.network_type IS NULL作为筛选条件"
         
         logger.info(f"增强后的问题: {enhanced}")
         return enhanced

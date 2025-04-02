@@ -33,7 +33,7 @@ test_queries = [
     {
         "title": "完整安全分析",
         "payload": {
-            "question": "分析最近出现的攻击类型和攻击源IP，重点关注外部IP，评估风险等级",
+            "question": "分析最近一周的网络攻击，重点关注高风险攻击，重点关注外部IP，评估风险等级",
             "use_ml": True
         }
     }
@@ -119,6 +119,16 @@ def test_query_api(query_index=0):
                 
                 ml_text = security_analysis["ml_analysis"]
                 
+                # 检查是否存在外部IP警告
+                has_external_ip_warning = "外部IP警告" in ml_text or "检测到" in ml_text and "外部" in ml_text and "IP" in ml_text
+                
+                if has_external_ip_warning:
+                    print("【⚠️ 外部IP警告】")
+                    external_ip_warning = ml_text.split("⚠️ 外部IP警告:")[1].split("\n\n")[0].strip() if "⚠️ 外部IP警告:" in ml_text else "检测到外部IP"
+                    print(f"  {external_ip_warning}")
+                    print("  根据新的风险评级策略，任何包含外部IP的攻击都被视为高风险(100分)")
+                    print("  外部IP的得分贡献: 100/100 分")
+                
                 # 解析异常检测部分
                 if "异常检测:" in ml_text:
                     anomaly_part = ml_text.split("异常检测:")[1].split(".")[0].strip()
@@ -184,10 +194,17 @@ def test_query_api(query_index=0):
                 print("\n📊 总风险分数估算:")
                 risk_level = security_analysis.get("risk_level", "未知")
                 print(f"  - 当前风险等级: {risk_level}")
+                
+                # 更新风险等级判断标准展示，包括外部IP情况
                 print(f"  - 风险等级判断标准:")
+                print(f"    * 存在外部IP: 自动判定为高风险")
                 print(f"    * 总分 > 60: 高风险")
                 print(f"    * 总分 > 30: 中风险")
                 print(f"    * 总分 ≤ 30: 低风险")
+                
+                # 如果存在外部IP，显示外部IP自动导致高风险的说明
+                if has_external_ip_warning:
+                    print(f"\n  ⚠️ 由于检测到外部IP，系统自动将风险等级评为'高'")
             else:
                 print("❌ 未找到机器学习分析结果")
                 print("可能的原因:")

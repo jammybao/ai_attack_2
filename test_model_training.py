@@ -26,7 +26,7 @@ def test_model_training():
         engine = create_engine(settings.DB_CONNECTION_STRING)
         print(f"成功连接到数据库: {settings.DB_CONNECTION_STRING}")
         
-        # 查询训练数据 - 修改为匹配实际表结构
+        # 查询训练数据 - 修改为匹配实际表结构，获取最近30天的数据
         with engine.connect() as conn:
             query = """
             SELECT 
@@ -34,7 +34,8 @@ def test_model_training():
                 category, attack_function, attack_step, signature, dst_ip, protocol,
                 src_port, dst_port, bytes_to_server as bytes_sent, bytes_to_client as bytes_received
             FROM ids_ai
-            LIMIT 1000
+            WHERE event_time >= CURDATE() - INTERVAL 30 DAY
+            ORDER BY event_time
             """
             result = conn.execute(text(query))
             df = pd.DataFrame(result.fetchall(), columns=result.keys())
