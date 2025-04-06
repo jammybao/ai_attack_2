@@ -1,0 +1,55 @@
+{
+    "question": "分析最近一周的网络攻击，重点关注高风险攻击和外部IP，评估风险等级",
+    "sql_query": "SELECT event_time, src_ip, dst_ip, threat_level, attack_function, attack_step, signature FROM ids_ai WHERE event_time >= CURDATE() - INTERVAL 7 DAY AND threat_level > 30 ORDER BY threat_level DESC, event_time DESC LIMIT 100",
+    "sql_result": "查询结果省略...",
+    "security_analysis": {
+        "risk_level": "高",
+        "key_findings": [
+            "发现5个外部IP对内网发起了高风险攻击",
+            "检测到两起远程命令执行尝试",
+            "监测到SQL注入攻击行为"
+        ],
+        "recommendations": [
+            "立即阻断可疑外部IP",
+            "更新防火墙规则",
+            "加强Web应用安全"
+        ],
+        "ip_analysis": "分析发现14个IP地址，其中唯一IP有8个。\n- 内部IP: 3个\n  * 192.168.10.5 (网络类型: 办公网)\n  * 192.168.10.10 (网络类型: 办公网)\n  * 10.10.50.8 (网络类型: 数据库网)\n- 外部IP: 5个\n  * 45.132.192.12\n  * 103.25.58.34\n  * 78.142.67.89\n  * 112.85.42.21\n  * 91.234.55.16\n\n出现频率最高的IP:\n- 45.132.192.12: 出现8次 [外部]\n- 103.25.58.34: 出现6次 [外部]\n- 192.168.10.5: 出现5次 [内部]",
+        "ip_correlation": "外部IP 45.132.192.12和103.25.58.34在同一时间段内连续攻击了内部服务器192.168.10.5，可能存在协同攻击行为",
+        "details": "最近一周检测到5个高风险外部IP对内网发起攻击，共发生14次攻击事件，包括远程命令执行尝试和SQL注入攻击。建议立即加强安全措施。"
+    },
+    "formatted_answer": "## 安全风险评估\n\n**风险等级**: 高\n\n### 关键发现\n\n1. 发现5个外部IP对内网发起了高风险攻击\n2. 检测到两起远程命令执行尝试\n3. 监测到SQL注入攻击行为\n\n### 安全建议\n\n1. 立即阻断可疑外部IP\n2. 更新防火墙规则\n3. 加强Web应用安全\n\n### IP地址分析\n\n分析发现14个IP地址，其中唯一IP有8个。\n- 内部IP: 3个\n  * 192.168.10.5 (网络类型: 办公网)\n  * 192.168.10.10 (网络类型: 办公网)\n  * 10.10.50.8 (网络类型: 数据库网)\n- 外部IP: 5个\n  * 45.132.192.12\n  * 103.25.58.34\n  * 78.142.67.89\n  * 112.85.42.21\n  * 91.234.55.16\n\n出现频率最高的IP:\n- 45.132.192.12: 出现8次 [外部]\n- 103.25.58.34: 出现6次 [外部]\n- 192.168.10.5: 出现5次 [内部]\n\n### 详细分析\n\n最近一周检测到5个高风险外部IP对内网发起攻击，共发生14次攻击事件，包括远程命令执行尝试和SQL注入攻击。建议立即加强安全措施。",
+    "ai_insight": {
+        "smart_score": 95,
+        "external_attack_count": 5,
+        "high_risk_events": [
+            {
+                "ip": "45.132.192.12",
+                "risk_level": "高",
+                "event_type": "漏洞利用",
+                "description": "远程命令执行尝试"
+            },
+            {
+                "ip": "103.25.58.34",
+                "risk_level": "高",
+                "event_type": "漏洞利用",
+                "description": "SQL注入攻击"
+            }
+        ],
+        "predicted_attacks": [
+            {
+                "target_ip": "192.168.10.5",
+                "attack_type": "命令执行",
+                "probability": 78.5,
+                "timeframe": "24小时内"
+            },
+            {
+                "target_ip": "192.168.10.10",
+                "attack_type": "SQL注入",
+                "probability": 75.2,
+                "timeframe": "24小时内"
+            }
+        ],
+        "risk_level": "高"
+    }
+}

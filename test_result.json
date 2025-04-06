@@ -1,0 +1,42 @@
+{
+  "question": "分析最近一周的网络攻击，重点关注高风险攻击和外部IP，评估风险等级",
+  "sql_query": "SQLQuery:  \n```sql\nSELECT \n    `ids_ai`.`event_time`, \n    `ids_ai`.`threat_level`, \n    `ids_ai`.`category`, \n    `ids_ai`.`src_ip`, \n    `ip_address`.`network_type` AS `src_network_type`, \n    `ids_ai`.`dst_ip`, \n    `ids_ai`.`signature`\nFROM \n    `ids_ai`\nLEFT JOIN \n    `ip_address` ON `ids_ai`.`src_ip` = `ip_address`.`ip`\nWHERE threat_level >= 30 AND  \n    `ids_ai`.`event_time` >= DATE_SUB(CURDATE(), INTERVAL 1 WEEK)\n    AND `ids_ai`.`threat_level` >= 30\n    AND `ip_address`.`network_type` IS NULL;\n```",
+  "sql_result": "[(datetime.datetime(2025, 3, 27, 9, 59, 17), 40, '可疑行为', '174.34.46.104', None, '174.35.26.10', 'TCP_可疑行为_SSH疑似爆破')]",
+  "security_analysis": {
+    "risk_level": "高",
+    "key_findings": [
+      "发现5个外部IP，存在潜在安全风险",
+      "发现外部IP(2个)，存在潜在安全风险",
+      "机器学习异常检测发现1条异常记录，异常比例为33.3%"
+    ],
+    "recommendations": [
+      "立即审查外部IP通信记录，确认是否为授权通信或存在攻击行为",
+      "建议针对检测到的异常流量模式设置监控告警，特别关注异常分数较高的记录",
+      "预防可能的下一步攻击(漏洞利用)，加强相关防御措施"
+    ],
+    "detailed_analysis": "安全风险等级: 高\n\n关键发现:\n1. 发现5个外部IP，存在潜在安全风险\n2. 发现外部IP(2个)，存在潜在安全风险\n3. 机器学习异常检测发现1条异常记录，异常比例为33.3%\n\n安全建议:\n1. 立即审查外部IP通信记录，确认是否为授权通信或存在攻击行为\n2. 建议针对检测到的异常流量模式设置监控告警，特别关注异常分数较高的记录\n3. 预防可能的下一步攻击(漏洞利用)，加强相关防御措施\n\nIP地址分析:\n分析发现2个IP地址，其中唯一IP有2个。\n- 外部IP: 2个\n  * 174.34.46.104\n  * 174.35.26.10\n\n出现频率最高的IP:\n- 174.34.46.104: 出现1次 [外部]\n- 174.35.26.10: 出现1次 [外部]\n\n内外部IP分类：\n- 外部源IP: 192.168.1.10, 8.8.8.8, 192.168.1.20\n\n机器学习分析:\n⚠️ 外部IP警告: 检测到3个外部源IP和2个外部目标IP。外部IP通信可能表示潜在的攻击行为，需要立即调查。\n\n异常检测: 发现1条异常记录，占比33.3%，平均异常分数47.5。 样本异常记录: {'event_time': '2025-03-01 12:20:00', 'event_type': '入侵检测', 'device_name': 'IDS-02', 'src_ip': '192.168.1.20', 'dst_ip': '10.0.0.10', 'threat_level': '中', 'category': '可疑行为', 'attack_function': '信息收集', 'attack_step': '扫描', 'signature': '端口扫描', 'protocol': 'TCP', 'src_port': 45678, 'dst_port': 0, 'bytes_sent': 512, 'bytes_received': 128, 'anomaly_score': np.float64(50.78151459844601)}攻击预测: 命令执行类型的攻击概率为66.7%。\n",
+    "ip_analysis": "分析发现2个IP地址，其中唯一IP有2个。\n- 外部IP: 2个\n  * 174.34.46.104\n  * 174.35.26.10\n\n出现频率最高的IP:\n- 174.34.46.104: 出现1次 [外部]\n- 174.35.26.10: 出现1次 [外部]\n\n内外部IP分类：\n- 外部源IP: 192.168.1.10, 8.8.8.8, 192.168.1.20",
+    "ml_analysis": "⚠️ 外部IP警告: 检测到3个外部源IP和2个外部目标IP。外部IP通信可能表示潜在的攻击行为，需要立即调查。\n\n异常检测: 发现1条异常记录，占比33.3%，平均异常分数47.5。 样本异常记录: {'event_time': '2025-03-01 12:20:00', 'event_type': '入侵检测', 'device_name': 'IDS-02', 'src_ip': '192.168.1.20', 'dst_ip': '10.0.0.10', 'threat_level': '中', 'category': '可疑行为', 'attack_function': '信息收集', 'attack_step': '扫描', 'signature': '端口扫描', 'protocol': 'TCP', 'src_port': 45678, 'dst_port': 0, 'bytes_sent': 512, 'bytes_received': 128, 'anomaly_score': np.float64(50.78151459844601)}攻击预测: 命令执行类型的攻击概率为66.7%。"
+  },
+  "formatted_answer": "## 安全风险评估\n\n**风险等级**: 高\n\n### 关键发现\n\n1. 发现5个外部IP，存在潜在安全风险\n2. 发现外部IP(2个)，存在潜在安全风险\n3. 机器学习异常检测发现1条异常记录，异常比例为33.3%\n\n### 安全建议\n\n1. 立即审查外部IP通信记录，确认是否为授权通信或存在攻击行为\n2. 建议针对检测到的异常流量模式设置监控告警，特别关注异常分数较高的记录\n3. 预防可能的下一步攻击(漏洞利用)，加强相关防御措施\n\n### IP地址分析\n\n分析发现2个IP地址，其中唯一IP有2个。\n\n- 外部IP: 2个\n\n  * 174.34.46.104\n\n  * 174.35.26.10\n\n\n\n出现频率最高的IP:\n\n- 174.34.46.104: 出现1次 [外部]\n\n- 174.35.26.10: 出现1次 [外部]\n\n\n\n内外部IP分类：\n\n- 外部源IP: 192.168.1.10, 8.8.8.8, 192.168.1.20\n\n### 机器学习分析\n\n⚠️ 外部IP警告: 检测到3个外部源IP和2个外部目标IP。外部IP通信可能表示潜在的攻击行为，需要立即调查。\n\n异常检测: 发现1条异常记录，占比33.3%，平均异常分数47.5。 样本异常记录: {'event_time': '2025-03-01 12:20:00', 'event_type': '入侵检测', 'device_name': 'IDS-02', 'src_ip': '192.168.1.20', 'dst_ip': '10.0.0.10', 'threat_level': '中', 'category': '可疑行为', 'attack_function': '信息收集', 'attack_step': '扫描', 'signature': '端口扫描', 'protocol': 'TCP', 'src_port': 45678, 'dst_port': 0, 'bytes_sent': 512, 'bytes_received': 128, 'anomaly_score': np.float64(50.78151459844601)}攻击预测: 命令执行类型的攻击概率为66.7%。\n\n### 详细分析\n\n安全风险等级: 高\n\n关键发现:\n1. 发现5个外部IP，存在潜在安全风险\n2. 发现外部IP(2个)，存在潜在安全风险\n3. 机器学习异常检测发现1条异常记录，异常比例为33.3%\n\n安全建议:\n1. 立即审查外部IP通信记录，确认是否为授权通信或存在攻击行为\n2. 建议针对检测到的异常流量模式设置监控告警，特别关注异常分数较高的记录\n3. 预防可能的下一步攻击(漏洞利用)，加强相关防御措施\n\nIP地址分析:\n分析发现2个IP地址，其中唯一IP有2个。\n- 外部IP: 2个\n  * 174.34.46.104\n  * 174.35.26.10\n\n出现频率最高的IP:\n- 174.34.46.104: 出现1次 [外部]\n- 174.35.26.10: 出现1次 [外部]\n\n内外部IP分类：\n- 外部源IP: 192.168.1.10, 8.8.8.8, 192.168.1.20\n\n机器学习分析:\n⚠️ 外部IP警告: 检测到3个外部源IP和2个外部目标IP。外部IP通信可能表示潜在的攻击行为，需要立即调查。\n\n异常检测: 发现1条异常记录，占比33.3%，平均异常分数47.5。 样本异常记录: {'event_time': '2025-03-01 12:20:00', 'event_type': '入侵检测', 'device_name': 'IDS-02', 'src_ip': '192.168.1.20', 'dst_ip': '10.0.0.10', 'threat_level': '中', 'category': '可疑行为', 'attack_function': '信息收集', 'attack_step': '扫描', 'signature': '端口扫描', 'protocol': 'TCP', 'src_port': 45678, 'dst_port': 0, 'bytes_sent': 512, 'bytes_received': 128, 'anomaly_score': np.float64(50.78151459844601)}攻击预测: 命令执行类型的攻击概率为66.7%。\n",
+  "ai_insight": {
+    "smart_score": 85,
+    "external_attack_count": 2,
+    "high_risk_events": [],
+    "predicted_attacks": [
+      {
+        "target_ip": "192.168.1.10",
+        "attack_type": "SQL注入",
+        "probability": 81.88832384239271,
+        "timeframe": "24小时内"
+      },
+      {
+        "target_ip": "192.168.1.20",
+        "attack_type": "命令执行",
+        "probability": 77.78128603057284,
+        "timeframe": "24小时内"
+      }
+    ],
+    "risk_level": "高"
+  }
+}

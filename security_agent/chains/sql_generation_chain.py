@@ -161,7 +161,7 @@ class SQLGenerationChain:
         return processed_columns
     
     def _enhance_security_question(self, question: str) -> str:
-        """增强安全相关问题，确保查询包含关键字段
+        """增强安全分析问题，确保包含关键字段
         
         Args:
             question: 原始问题
@@ -169,33 +169,17 @@ class SQLGenerationChain:
         Returns:
             增强后的问题
         """
-        # 检测是否是关于安全风险或攻击的模糊查询
-        risk_terms = ["风险", "攻击", "威胁", "安全", "入侵", "异常", "可疑"]
-        is_risk_query = any(term in question for term in risk_terms)
+        enhanced = question
         
-        # 检测是否是高危告警查询
-        high_risk_terms = ["高危", "高风险", "严重", "紧急", "critical", "high"]
-        is_high_risk_query = any(term in question for term in high_risk_terms)
+        # 判断问题类型
+        is_threat_query = any(term in question.lower() for term in ["威胁", "攻击", "告警", "alert", "threat", "attack"])
+        is_high_risk_query = any(term in question.lower() for term in ["高危", "高风险", "严重", "紧急", "critical", "high"])
+        is_ip_query = any(term in question.lower() for term in ["ip", "源ip", "目标ip", "流量", "通信"])
+        focus_on_external_ip = any(term in question.lower() for term in ["外部", "外网", "互联网", "external"])
         
-        # 检测是否涉及IP分析
-        ip_terms = ["ip", "IP", "源地址", "目标地址", "src_ip", "dst_ip", "source_ip", "destination_ip"]
-        is_ip_query = any(term in question for term in ip_terms)
-        
-        # 检测是否特别关注外部IP
-        external_ip_terms = ["外部", "外网", "external", "外部IP", "外网IP"]
-        focus_on_external_ip = any(term in question for term in external_ip_terms)
-        
-        # 基础增强提示，告诉模型不要添加LIMIT语句
-        enhanced = question + "，请不要在SQL查询中添加LIMIT语句，我需要查看所有匹配的结果"
-        
-        if is_risk_query:
-            # 检查问题是否已经包含字段信息
-            field_terms = ["字段", "显示", "包含", "src_ip", "dst_ip", "threat_level", "源IP", "目标IP", "威胁等级"]
-            has_field_info = any(term in question for term in field_terms)
-            
-            if not has_field_info:
-                # 如果是模糊的风险查询且没有指定字段，增强问题以包含关键字段
-                enhanced += "，请查询包含事件时间(event_time)、威胁等级(threat_level)、攻击类别(category)、源IP地址(src_ip)、目标IP地址(dst_ip)、攻击特征(signature)等关键安全信息"
+        # 调整查询以包含重要安全字段
+        if is_threat_query:
+            enhanced += "，请确保查询结果包含事件时间(event_time)、源IP(src_ip)、目标IP(dst_ip)、威胁等级(threat_level)和特征(signature)字段"
             
             # 如果是高危告警查询，明确指定威胁等级阈值
             if is_high_risk_query:
@@ -208,6 +192,10 @@ class SQLGenerationChain:
             # 如果特别关注外部IP，提供明确的外部IP判断条件
             if focus_on_external_ip:
                 enhanced += "。请注意，外部IP的判断条件是ip_address.network_type IS NULL，不是network_type不等于某个特定值。当查询外部IP时，请在WHERE条件中使用ip_address.network_type IS NULL作为筛选条件"
+                
+        # 如果同时关注高风险事件和外部IP，使用OR逻辑连接两个条件
+        if is_high_risk_query and focus_on_external_ip:
+            enhanced += "。注意：当同时查询高风险事件和外部IP时，请使用OR逻辑连接这两个条件(threat_level >= 30 OR ip_address.network_type IS NULL)，而不是AND逻辑，以确保能够获取两种情况的事件"
         
         logger.info(f"增强后的问题: {enhanced}")
         return enhanced
