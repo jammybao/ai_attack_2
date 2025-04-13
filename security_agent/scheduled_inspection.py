@@ -16,6 +16,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional, Tuple
 from pathlib import Path
 from dotenv import load_dotenv
+from sklearn.preprocessing import StandardScaler
 
 # 加载环境变量
 load_dotenv()
@@ -180,7 +181,8 @@ class DirectSecurityInspection:
                 "high_risk_events": [],
                 "key_findings": ["没有安全数据可供分析"],
                 "recommendations": ["检查数据收集系统是否正常工作"],
-                "predicted_attacks": []
+                "predicted_attacks": [],
+                "analysis_method": "无数据分析"
             }
         
         # 1. 基本统计分析
@@ -202,29 +204,62 @@ class DirectSecurityInspection:
             high_risk_events.append(event)
         
         # 3. 使用异常检测模型找出异常行为
+        anomalies_info = {"found": False, "count": 0}  # 简化的异常信息
+        analysis_method = "基础分析"
         try:
             numerical_features = ['threat_level']
             anomalies = self.anomaly_model.detect_anomalies(data, numerical_features)
+            
+            # 提取关键信息，转换为简单类型
+            anomalies_info = {
+                "found": bool(anomalies.get("anomaly_found", False)),
+                "count": int(anomalies.get("anomaly_count", 0)),
+                "percentage": float(anomalies.get("anomaly_percentage", 0)),
+                "avg_score": float(anomalies.get("avg_anomaly_score", 0))
+            }
+            
             if anomalies.get("anomaly_found", False):
                 # 将检测到的异常添加到高风险事件
                 for anomaly in anomalies.get("top_anomalies", []):
                     if anomaly not in high_risk_events:
-                        high_risk_events.append(anomaly)
+                        # 确保所有值都是简单类型
+                        cleaned_anomaly = {
+                            "ip": str(anomaly.get("ip", "未知")),
+                            "risk_level": str(anomaly.get("risk_level", "高")),
+                            "event_type": "异常行为",
+                            "description": "系统检测到的异常模式"
+                        }
+                        high_risk_events.append(cleaned_anomaly)
+                analysis_method = "异常检测分析"
         except Exception as e:
             logger.error(f"异常检测失败: {str(e)}")
         
         # 4. 分析IP信誉
+        ip_reputation_info = {"suspicious_found": False, "count": 0}  # 简化的IP信誉信息
         try:
             ip_reputation = self.ip_reputation_model.analyze_reputation(data)
+            
+            # 提取关键信息，转换为简单类型
+            suspicious_src_ips = ip_reputation.get("suspicious_src_ips", [])
+            ip_reputation_info = {
+                "suspicious_found": bool(ip_reputation.get("suspicious_ips_found", False)),
+                "suspicious_count": len(suspicious_src_ips)
+            }
+            
             # 将高风险IP添加到高风险事件
-            for ip, score in ip_reputation.get("suspicious_src_ips", []):
-                if score > 0.7 and not any(event['ip'] == ip for event in high_risk_events):
-                    high_risk_events.append({
-                        "ip": ip,
-                        "risk_level": "高",
-                        "event_type": "可疑IP",
-                        "description": f"IP信誉分数: {score:.2f}"
-                    })
+            for ip_score_pair in suspicious_src_ips:
+                if len(ip_score_pair) >= 2:
+                    ip = ip_score_pair[0]
+                    score = float(ip_score_pair[1])
+                    if score > 0.7 and not any(event['ip'] == ip for event in high_risk_events):
+                        high_risk_events.append({
+                            "ip": ip,
+                            "risk_level": "高",
+                            "event_type": "可疑IP",
+                            "description": f"IP信誉分数: {score:.2f}"
+                        })
+            if ip_reputation.get("suspicious_ips_found", False):
+                analysis_method = f"{analysis_method} + IP信誉分析"
         except Exception as e:
             logger.error(f"IP信誉分析失败: {str(e)}")
         
@@ -233,6 +268,17 @@ class DirectSecurityInspection:
         try:
             attack_predictions = self.attack_chain_model.predict_attacks(data)
             predicted_attacks = attack_predictions.get("predicted_attacks", [])
+            
+            # 确保所有预测攻击数据都是简单类型
+            for attack in predicted_attacks:
+                for key in attack:
+                    if isinstance(attack[key], (np.int64, np.int32, np.float64, np.float32)):
+                        attack[key] = float(attack[key])
+            
+            # 更新分析方法
+            prediction_method = attack_predictions.get("analysis_method", "攻击链预测")
+            if predicted_attacks:
+                analysis_method = f"{analysis_method} + {prediction_method}"
         except Exception as e:
             logger.error(f"攻击预测失败: {str(e)}")
         
@@ -244,7 +290,7 @@ class DirectSecurityInspection:
         risk_level = self._calculate_risk_level(data, high_risk_events, external_attack_count)
         smart_score = self._calculate_smart_score(data, high_risk_events, predicted_attacks)
         
-        # 整合结果
+        # 整合结果 - 仅包含可JSON序列化的数据
         result = {
             "risk_level": risk_level,
             "smart_score": smart_score,
@@ -252,7 +298,10 @@ class DirectSecurityInspection:
             "high_risk_events": high_risk_events,
             "key_findings": key_findings,
             "recommendations": recommendations,
-            "predicted_attacks": predicted_attacks
+            "predicted_attacks": predicted_attacks,
+            "analysis_method": analysis_method,
+            "anomalies_info": anomalies_info,
+            "ip_reputation_info": ip_reputation_info
         }
         
         return result
@@ -464,18 +513,55 @@ class DirectSecurityInspection:
         
         return final_score
     
-    def run_inspection(self, hours: int = 1) -> Dict[str, Any]:
+    def run_inspection(self, hours: int = 1, training_hours: int = 720) -> Dict[str, Any]:
         """执行定时安全巡检
         
         Args:
             hours: 分析最近多少小时的数据，默认1小时
+            training_hours: 用于训练模型的历史数据时间范围，默认720小时（一个月）
             
         Returns:
             巡检结果字典
         """
         logger.info(f"开始执行最近{hours}小时的安全巡检")
         
-        # 获取安全数据
+        # 获取用于训练的长时间窗口数据
+        if training_hours > hours:
+            logger.info(f"获取最近{training_hours}小时的数据用于模型训练")
+            training_data = self.get_hourly_data(training_hours)
+            
+            # 预训练攻击链模型
+            if not training_data.empty and len(training_data) >= 20:  # 确保有足够的训练数据
+                logger.info(f"使用{len(training_data)}条历史记录训练预测模型")
+                try:
+                    self.attack_chain_model.auto_train(training_data)
+                except Exception as e:
+                    logger.error(f"攻击链模型预训练失败: {str(e)}")
+                
+                # 也预训练异常检测模型
+                try:
+                    logger.info("初始化并预训练异常检测模型")
+                    if 'threat_level' in training_data.columns:
+                        # 确保异常检测模型有初始化的scaler
+                        if self.anomaly_model.scaler is None:
+                            self.anomaly_model.scaler = StandardScaler()
+                        
+                        # 准备用于异常检测的特征
+                        numerical_features = ['threat_level']
+                        X = training_data[numerical_features].fillna(0).values
+                        
+                        # 拟合scaler
+                        self.anomaly_model.scaler.fit(X)
+                        
+                        # 拟合模型
+                        X_scaled = self.anomaly_model.scaler.transform(X)
+                        self.anomaly_model.model.fit(X_scaled)
+                        
+                        logger.info("异常检测模型训练完成")
+                except Exception as e:
+                    logger.error(f"异常检测模型预训练失败: {str(e)}")
+        
+        # 获取用于分析的安全数据（指定时间窗口）
         data = self.get_hourly_data(hours)
         
         # 分析数据

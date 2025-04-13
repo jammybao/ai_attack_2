@@ -60,6 +60,8 @@ def parse_arguments():
     parser.add_argument("--email", action="store_true", help="启用电子邮件通知")
     parser.add_argument("--recipients", help="电子邮件收件人，多个收件人用逗号分隔")
     parser.add_argument("--hours", type=int, default=1, help="分析最近多少小时的数据，默认1小时")
+    parser.add_argument("--training-hours", type=int, default=720, 
+                        help="用于训练模型的历史数据时间范围，默认720小时（一个月）")
     
     return parser.parse_args()
 
@@ -75,6 +77,7 @@ def print_inspection_summary(result):
         external_attack_count = result.get("external_attack_count", 0)
         high_risk_events = result.get("high_risk_events", [])
         predicted_attacks = result.get("predicted_attacks", [])
+        analysis_method = result.get("analysis_method", "标准分析")
         
         # 设置风险级别的颜色
         risk_color = "green"
@@ -104,6 +107,7 @@ def print_inspection_summary(result):
         summary_table.add_row("安全评分", f"[{score_color}]{smart_score}[/{score_color}]")
         summary_table.add_row("外部攻击次数", f"{external_attack_count}")
         summary_table.add_row("高风险事件数量", f"{len(high_risk_events)}")
+        summary_table.add_row("分析方法", f"[cyan]{analysis_method}[/cyan]")
         
         console.print(summary_table)
         
@@ -254,12 +258,12 @@ def send_alert_email(result):
     except Exception as e:
         logger.error(f"发送邮件时出错: {str(e)}")
 
-def run_security_inspection(inspector, hours=1):
+def run_security_inspection(inspector, hours=1, training_hours=720):
     """执行安全巡检"""
     logger.info(f"开始执行最近{hours}小时的安全巡检...")
     
-    # 执行巡检
-    result = inspector.run_inspection(hours=hours)
+    # 执行巡检，传入训练数据时间范围
+    result = inspector.run_inspection(hours=hours, training_hours=training_hours)
     
     # 打印摘要
     print_inspection_summary(result)
@@ -270,12 +274,13 @@ def run_security_inspection(inspector, hours=1):
     
     return result
 
-def schedule_inspection(inspector, interval_hours, hours_to_analyze):
+def schedule_inspection(inspector, interval_hours, hours_to_analyze, training_hours):
     """调度定期巡检任务"""
     schedule.every(interval_hours).hours.do(
         run_security_inspection, 
         inspector=inspector,
-        hours=hours_to_analyze
+        hours=hours_to_analyze,
+        training_hours=training_hours
     )
     logger.info(f"已设置每{interval_hours}小时执行一次安全巡检，每次分析最近{hours_to_analyze}小时的数据")
     
@@ -297,6 +302,7 @@ def main():
     logger.info("直接网络安全巡检工具启动")
     logger.info(f"巡检间隔: {args.interval}小时")
     logger.info(f"分析范围: 最近{args.hours}小时")
+    logger.info(f"训练数据范围: 最近{args.training_hours}小时")
     logger.info(f"Email通知: {'启用' if EMAIL_CONFIG['enabled'] else '禁用'}")
     
     # 数据库配置信息
@@ -319,12 +325,12 @@ def main():
     
     # 立即运行一次
     if args.run_now:
-        run_security_inspection(inspector, hours=args.hours)
+        run_security_inspection(inspector, hours=args.hours, training_hours=args.training_hours)
         if not args.interval:
             return
     
     # 启动定时任务
-    schedule_inspection(inspector, args.interval, args.hours)
+    schedule_inspection(inspector, args.interval, args.hours, args.training_hours)
 
 if __name__ == "__main__":
     main() 
