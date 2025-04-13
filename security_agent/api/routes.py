@@ -236,7 +236,27 @@ def extract_ai_insight(analysis: Dict[str, Any], sql_query: str = "", sql_result
         elif analysis["risk_level"] == "低":
             insight["smart_score"] = max(30, 60 - len(analysis.get("key_findings", [])) * 5)
     
-    # 2. 提取外部IP攻击次数：优先从ip_analysis文本中提取
+    # 2. 在这里修复key_findings中关于外部IP的重复和不一致问题
+    if "key_findings" in analysis and isinstance(analysis["key_findings"], list):
+        filtered_findings = []
+        external_ip_finding = None
+        for finding in analysis["key_findings"]:
+            # 跳过包含"外部IP"的发现项，稍后我们会添加一个准确的替代项
+            if isinstance(finding, str) and "外部IP" in finding:
+                # 如果找到描述外部IP的发现项，先临时保存下来
+                if not external_ip_finding:
+                    external_ip_pattern = r'外部IP\D*(\d+)'
+                    match = re.search(external_ip_pattern, finding)
+                    if match:
+                        external_ip_finding = finding
+                continue
+            # 添加其他非外部IP相关的发现项
+            filtered_findings.append(finding)
+        
+        # 将过滤后的发现项重新赋值给analysis
+        analysis["key_findings"] = filtered_findings
+    
+    # 3. 提取外部IP攻击次数：优先从ip_analysis文本中提取
     if "ip_analysis" in analysis:
         # 从IP分析中提取外部IP信息
         ip_analysis = analysis["ip_analysis"]
@@ -247,9 +267,16 @@ def extract_ai_insight(analysis: Dict[str, Any], sql_query: str = "", sql_result
         
         if external_ip_match:
             insight["external_attack_count"] = int(external_ip_match.group(1))
+            
+            # 如果我们成功提取了外部IP数量，并且之前找到了外部IP发现项，则添加一个准确的发现项
+            if "key_findings" in analysis and isinstance(analysis["key_findings"], list):
+                analysis["key_findings"].append(f"发现{insight['external_attack_count']}个外部IP，存在潜在安全风险")
     
-    # 3. 提取SQL结果中的所有IP地址用于后续分析
+    # 4. 提取SQL结果中的所有IP地址用于后续分析
     sql_ips = set()
+    external_ips = set()
+    internal_ips = set()
+    
     if isinstance(sql_result, str):
         # 提取所有IP地址
         ip_pattern = r"\b(?:\d{1,3}\.){3}\d{1,3}\b"
@@ -262,14 +289,87 @@ def extract_ai_insight(analysis: Dict[str, Any], sql_query: str = "", sql_result
             sql_ips = sql_ips - example_ips
             logger.info(f"过滤示例IP后，SQL结果中的IP: {sql_ips}")
         
-        # 如果没有从ip_analysis中获取到外部IP数量，使用SQL结果中的IP地址数量
-        if insight["external_attack_count"] == 0 and sql_ips:
-            # 如果SQL查询包含network_type IS NULL条件，则所有IP都是外部IP
-            if "network_type is null" in sql_query.lower():
-                insight["external_attack_count"] = len(sql_ips)
-                logger.info(f"从SQL查询条件推断外部IP数量: {len(sql_ips)}")
+        # 区分内部和外部IP
+        for ip in sql_ips:
+            is_internal = False
+            
+            # 检查SQL结果是否包含ip_type字段，直接使用该字段判断内外部IP
+            if isinstance(sql_result, str):
+                # 查找ip_type字段值 - 修改正则表达式以适应元组格式
+                # 元组的结构是: (datetime.datetime(2025, 4, 10, 15, 37, 55), '174.35.58.65', '10.174.242.48', 30, 'HTTP_注入攻击_算法_请求头SQL注入', '2厂生产网', 'internal')
+                # ip_type是最后一个字段
+                ip_type_pattern1 = r"'{}',.*?'[^']+',.*?\d+,.*?'[^']+',\s+'[^']+',\s+'(external|internal)'".format(re.escape(ip))
+                # 或者，ip_type可能是任何位置的字段
+                ip_type_pattern2 = r"'{}',.*?'(external|internal)'".format(re.escape(ip))
+                
+                ip_type_match = re.search(ip_type_pattern1, sql_result, re.IGNORECASE) or re.search(ip_type_pattern2, sql_result, re.IGNORECASE)
+                
+                if ip_type_match:
+                    # 直接使用ip_type字段值判断
+                    ip_type = ip_type_match.group(1)
+                    logger.info(f"【DEBUG】正则表达式匹配到IP={ip}的ip_type={ip_type}")
+                    if ip_type.lower() == 'internal':
+                        # 内部IP
+                        internal_ips.add(ip)
+                        is_internal = True
+                        
+                        # 尝试提取网络类型
+                        network_type_pattern = r"'{}',.*?'([^']+网)'".format(re.escape(ip))
+                        network_type_match = re.search(network_type_pattern, sql_result)
+                        network_type = network_type_match.group(1) if network_type_match else "未知"
+                        
+                        logger.info(f"从SQL结果中识别到内部IP: {ip}, network_type: {network_type}, ip_type: {ip_type}")
+                    else:
+                        # 外部IP
+                        external_ips.add(ip)
+                        logger.info(f"从SQL结果中识别到外部IP: {ip}, ip_type: {ip_type}")
+                    continue
+                else:
+                    logger.info(f"【DEBUG】未能找到IP={ip}的ip_type字段，尝试搜索的模式: {ip_type_pattern1} 或 {ip_type_pattern2}")
+                
+                # 如果没有ip_type字段，则检查此IP是否在SQL结果中有network_type值
+                if "network_type" in sql_result:
+                    # 检查元组数据中的network_type值
+                    # 尝试查找网络类型是否不为NULL且有意义
+                    network_type_pattern = r"'{}',.*?'([^']*网)'".format(re.escape(ip))
+                    network_type_match = re.search(network_type_pattern, sql_result)
+                    
+                    if network_type_match and network_type_match.group(1) and "网" in network_type_match.group(1):
+                        # 找到有效的network_type，说明是内部IP
+                        internal_ips.add(ip)
+                        is_internal = True
+                        logger.info(f"从SQL结果中识别到内部IP: {ip}, network_type: {network_type_match.group(1)}")
+                    else:
+                        logger.info(f"【DEBUG】使用network_type模式未能匹配到内部IP: {ip}")
+            
+            if not is_internal:
+                # 如果没有ip_type字段或network_type为NULL，视为外部IP
+                external_ips.add(ip)
+                logger.info(f"从SQL结果中识别到外部IP: {ip}")
+        
+        # 更新外部IP攻击次数 - 只使用SQL结果中确认为external的IP
+        if insight["external_attack_count"] == 0:
+            insight["external_attack_count"] = len(external_ips)
+            logger.info(f"从SQL结果中识别到的外部IP数量: {len(external_ips)}")
+            
+            # 如果没有外部IP，则risk_level应该不是"高"
+            if len(external_ips) == 0 and insight["risk_level"] == "高":
+                insight["risk_level"] = "低"
+                logger.info("没有外部IP，降低风险等级为'低'")
+            
+            # 如果之前没有添加过外部IP发现项，现在添加
+            if "key_findings" in analysis and isinstance(analysis["key_findings"], list):
+                # 清除所有关于外部IP的发现项
+                analysis["key_findings"] = [finding for finding in analysis["key_findings"] if not (isinstance(finding, str) and "外部IP" in finding)]
+                
+                # 只有在有外部IP时才添加发现项
+                if len(external_ips) > 0:
+                    analysis["key_findings"].append(f"发现{len(external_ips)}个外部IP，存在潜在安全风险")
+                    logger.info(f"添加外部IP发现项: 发现{len(external_ips)}个外部IP，存在潜在安全风险")
+                else:
+                    logger.info("没有外部IP，不添加外部IP发现项")
     
-    # 4. 提取高风险事件 - 首先从SQL结果中提取
+    # 5. 提取高风险事件 - 首先从SQL结果中提取
     if sql_result and sql_ips:  # 确保有SQL结果和有效IP
         try:
             # 检查是否包含元组格式的SQL结果
@@ -341,7 +441,7 @@ def extract_ai_insight(analysis: Dict[str, Any], sql_query: str = "", sql_result
             import traceback
             logger.warning(traceback.format_exc())
     
-    # 5. 如果没有高风险事件，从SQL结果构建
+    # 6. 如果没有高风险事件，从SQL结果构建
     if not insight["high_risk_events"] and sql_ips:
         # 从SQL结果直接构建高风险事件
         for ip in sql_ips:
@@ -383,11 +483,11 @@ def extract_ai_insight(analysis: Dict[str, Any], sql_query: str = "", sql_result
             if len(insight["high_risk_events"]) >= 5:
                 break
     
-    # 6. 生成预测攻击 - 只使用SQL结果中的IP，不使用示例数据中的IP
-    if len(insight["predicted_attacks"]) == 0 and sql_ips:
-        # 只使用SQL结果中的有效IP生成预测攻击
-        sql_ip_list = list(sql_ips)
-        for i, ip in enumerate(sql_ip_list[:2]):  # 最多生成2个预测
+    # 7. 生成预测攻击 - 优先使用外部IP
+    if len(insight["predicted_attacks"]) == 0 and external_ips:
+        # 使用外部IP优先生成预测攻击
+        external_ip_list = list(external_ips)
+        for i, ip in enumerate(external_ip_list[:2]):  # 最多生成2个预测
             # 排除示例数据中的IP
             if ip in {"192.168.1.20", "10.0.0.10", "8.8.8.8"}:
                 logger.info(f"跳过示例数据IP: {ip}")
@@ -421,7 +521,10 @@ def extract_ai_insight(analysis: Dict[str, Any], sql_query: str = "", sql_result
             # 仍然是未知，使用默认值
             if attack_type == "未知":
                 attack_types = ["SQL注入", "命令执行", "暴力破解", "漏洞利用"]
-                attack_type = attack_types[hash(ip) % len(attack_types)]
+                import hashlib
+                hash_obj = hashlib.md5(ip.encode())
+                hash_int = int(hash_obj.hexdigest(), 16)
+                attack_type = attack_types[hash_int % len(attack_types)]
             
             # 计算一个确定性的概率值
             import hashlib
@@ -437,16 +540,36 @@ def extract_ai_insight(analysis: Dict[str, Any], sql_query: str = "", sql_result
                 "timeframe": "24小时内"
             }
             insight["predicted_attacks"].append(attack)
+            
+        # 如果无法从外部IP生成预测攻击，则尝试使用所有IP
+        if not insight["predicted_attacks"] and sql_ips:
+            sql_ip_list = list(sql_ips - set(external_ip_list))  # 使用其他非外部IP
+            for i, ip in enumerate(sql_ip_list[:2]):  # 最多生成2个预测
+                if ip in {"192.168.1.20", "10.0.0.10", "8.8.8.8"}:
+                    continue
+                    
+                # 使用默认值
+                attack_types = ["SQL注入", "命令执行", "暴力破解", "漏洞利用"]
+                import hashlib
+                hash_obj = hashlib.md5(ip.encode())
+                hash_int = int(hash_obj.hexdigest(), 16)
+                attack_type = attack_types[hash_int % len(attack_types)]
+                
+                # 计算概率值
+                hash_obj = hashlib.md5(f"{ip}:{attack_type}".encode())
+                hash_int = int(hash_obj.hexdigest(), 16)
+                probability = 60.0 + (hash_int % 15)  # 60-75之间的概率
+                
+                # 创建预测攻击
+                attack = {
+                    "target_ip": ip,
+                    "attack_type": attack_type,
+                    "probability": probability,
+                    "timeframe": "24小时内"
+                }
+                insight["predicted_attacks"].append(attack)
     
-    # 7. 确保外部IP攻击次数至少为SQL结果中的IP数量
-    if insight["external_attack_count"] == 0 and sql_ips:
-        insight["external_attack_count"] = len(sql_ips)
-        
-    # 如果有高风险事件但没有计算外部IP攻击次数，使用高风险事件数量
-    if insight["high_risk_events"] and insight["external_attack_count"] < len(insight["high_risk_events"]):
-        insight["external_attack_count"] = len(insight["high_risk_events"])
-    
-    # 最终检查 - 确保没有示例数据混入
+    # 8. 最终检查 - 确保没有示例数据混入
     if insight["high_risk_events"]:
         filtered_events = []
         for event in insight["high_risk_events"]:

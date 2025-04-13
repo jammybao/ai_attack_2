@@ -1,0 +1,22 @@
+{
+  "question": "分析最近1小时的网络攻击，重点关注高风险攻击和外部IP，评估风险等级",
+  "sql_query": "```sql\nSELECT \n    `ids_ai`.`event_time`, \n    `ids_ai`.`src_ip`, \n    `ids_ai`.`dst_ip`, \n    `ids_ai`.`threat_level`, \n    `ids_ai`.`signature`, \n    CASE WHEN `ip_address`.`network_type` IS NULL THEN 'external' ELSE 'internal' END AS `ip_type`, \n    `ip_address`.`network_type`\nFROM \n    `ids_ai`\nLEFT JOIN \n    `ip_address` ON `ids_ai`.`src_ip` = `ip_address`.`ip`\nWHERE threat_level >= 30 AND  \n    `ids_ai`.`event_time` >= DATE_SUB(CURDATE(), INTERVAL 1 HOUR)\n    AND (`ids_ai`.`threat_level` >= 30 OR `ip_address`.`network_type` IS NULL)\nORDER BY \n    `ids_ai`.`event_time` DESC;\n```",
+  "sql_result": "",
+  "security_analysis": {
+    "risk_level": "低",
+    "key_findings": [],
+    "recommendations": [
+      "继续监控系统活动，保持安全策略的最新状态"
+    ],
+    "detailed_analysis": "安全风险等级: 低\n\n\n安全建议:\n1. 继续监控系统活动，保持安全策略的最新状态\n",
+    "ip_analysis": ""
+  },
+  "formatted_answer": "## 安全风险评估\n\n**风险等级**: 低\n\n### 安全建议\n\n1. 继续监控系统活动，保持安全策略的最新状态\n\n### 详细分析\n\n安全风险等级: 低\n\n\n安全建议:\n1. 继续监控系统活动，保持安全策略的最新状态\n",
+  "ai_insight": {
+    "smart_score": 60,
+    "external_attack_count": 0,
+    "high_risk_events": [],
+    "predicted_attacks": [],
+    "risk_level": "低"
+  }
+}

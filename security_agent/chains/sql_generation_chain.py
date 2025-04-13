@@ -200,6 +200,37 @@ class SQLGenerationChain:
         logger.info(f"增强后的问题: {enhanced}")
         return enhanced
     
+    def enhance_prompt(self, user_question: str) -> str:
+        """增强问题提示，添加更多细节和上下文
+        
+        Args:
+            user_question: 用户原始问题
+            
+        Returns:
+            增强后的问题提示
+        """
+        enhanced_prompt = f"{user_question}，请确保查询结果包含事件时间(event_time)、源IP(src_ip)、目标IP(dst_ip)、威胁等级(threat_level)和特征(signature)字段，"
+        
+        # 添加关于高危告警的提示
+        enhanced_prompt += "请确保查询条件中包含威胁等级(threat_level)>=30的条件，这是高危告警的定义标准，"
+        
+        # 添加关于内外部IP的提示
+        enhanced_prompt += "并且请使用LEFT JOIN关联ip_address表，以提供IP的network_type信息，这对区分内外部IP很重要。"
+        enhanced_prompt += "对于源IP，使用LEFT JOIN ip_address ON security_logs.src_ip = ip_address.ip，并在结果中包含ip_address.network_type字段。"
+        
+        # 添加明确的内外部IP字段定义
+        enhanced_prompt += "请添加一个明确的字段：CASE WHEN ip_address.network_type IS NULL THEN 'external' ELSE 'internal' END AS ip_type，"
+        enhanced_prompt += "以便直接标识该IP是内部IP还是外部IP。"
+        
+        # 添加外部IP的明确定义
+        enhanced_prompt += "请注意，外部IP的判断条件是ip_address.network_type IS NULL，不是network_type不等于某个特定值。"
+        enhanced_prompt += "当查询外部IP时，请在WHERE条件中使用ip_address.network_type IS NULL作为筛选条件。"
+        
+        # 添加高风险事件和外部IP的逻辑关系提示
+        enhanced_prompt += "注意：当同时查询高风险事件和外部IP时，请使用OR逻辑连接这两个条件(threat_level >= 30 OR ip_address.network_type IS NULL)，而不是AND逻辑，以确保能够获取两种情况的事件"
+        
+        return enhanced_prompt
+    
     def generate_sql(self, question: str, table_names: Optional[List[str]] = None) -> str:
         """生成SQL查询，并确保包含关键安全分析字段
         
@@ -212,8 +243,8 @@ class SQLGenerationChain:
         """
         logger.info(f"生成SQL查询，问题: {question}")
         
-        # 增强问题，确保查询包含关键字段
-        enhanced_question = self._enhance_security_question(question)
+        # 增强问题，确保查询包含关键字段和ip_type字段
+        enhanced_question = self.enhance_prompt(question)
         
         inputs = {"question": enhanced_question}
         if table_names:
@@ -254,13 +285,10 @@ class SQLGenerationChain:
                     else:
                         sql_query = modified_sql
             
-            # 检查是否涉及IP分析但没有关联ip_address表
-            ip_related = any(term in question.lower() for term in ["ip", "源ip", "目标ip", "内部", "外部", "入侵"])
+            # 确保SQL查询包含ip_type字段
             clean_sql = self._extract_sql(sql_query)
-            
-            if ip_related and "ip_address" not in clean_sql and ("src_ip" in clean_sql or "source_ip" in clean_sql):
-                # 需要添加与ip_address表的关联
-                modified_sql = self._add_ip_address_join(clean_sql)
+            if "ip_type" not in clean_sql and ("src_ip" in clean_sql or "source_ip" in clean_sql):
+                modified_sql = self._ensure_ip_type_field(clean_sql)
                 
                 # 将修改后的SQL放回原始响应格式
                 if "```sql" in sql_query:
@@ -268,10 +296,79 @@ class SQLGenerationChain:
                 else:
                     sql_query = modified_sql
             
+            # 移除LIMIT限制
+            clean_sql = self._extract_sql(sql_query)
+            if "LIMIT" in clean_sql:
+                # 使用正则表达式移除LIMIT子句
+                modified_sql = re.sub(r'\s+LIMIT\s+\d+\s*;?', ';', clean_sql)
+                
+                # 确保SQL语句以分号结尾
+                if not modified_sql.strip().endswith(';'):
+                    modified_sql = modified_sql.strip() + ';'
+                
+                # 将修改后的SQL放回原始响应格式
+                if "```sql" in sql_query:
+                    sql_query = sql_query.replace(clean_sql, modified_sql)
+                else:
+                    sql_query = modified_sql
+                    
+                logger.info(f"移除了LIMIT限制，修改后的SQL: {modified_sql[:100]}...")
+            
             return sql_query
         except Exception as e:
             logger.error(f"SQL查询生成失败: {e}")
             raise
+    
+    def _ensure_ip_type_field(self, sql: str) -> str:
+        """确保SQL查询包含ip_type字段
+        
+        Args:
+            sql: 原始SQL查询
+            
+        Returns:
+            添加了ip_type字段的SQL查询
+        """
+        # 检查是否已经包含ip_type字段
+        if "ip_type" in sql:
+            return sql
+            
+        # 提取SELECT和FROM部分
+        select_pattern = r"(SELECT\s+)(.*?)(\s+FROM\s+)(.*?)(\s+WHERE|\s+GROUP BY|\s+ORDER BY|\s*$)"
+        match = re.search(select_pattern, sql, re.IGNORECASE | re.DOTALL)
+        
+        if not match:
+            return sql
+            
+        select_keyword = match.group(1)
+        select_fields = match.group(2)
+        from_keyword = match.group(3)
+        from_tables = match.group(4)
+        rest_of_query = match.group(5)
+        
+        # 判断是否包含ip_address表
+        if "ip_address" not in from_tables:
+            # 需要先添加ip_address表的关联
+            sql = self._add_ip_address_join(sql)
+            return self._ensure_ip_type_field(sql)  # 递归调用，确保添加ip_type字段
+        
+        # 提取表别名
+        ip_address_alias_match = re.search(r"ip_address\s+(?:as\s+)?([a-zA-Z0-9_]+)", from_tables, re.IGNORECASE)
+        alias = ip_address_alias_match.group(1) if ip_address_alias_match else "ip_address"
+        
+        # 添加ip_type字段
+        ip_type_field = f", CASE WHEN {alias}.network_type IS NULL THEN 'external' ELSE 'internal' END AS ip_type"
+        
+        # 处理SELECT部分
+        if select_fields.strip() == "*":
+            select_fields = f"*, {ip_type_field}"
+        else:
+            select_fields = f"{select_fields}{ip_type_field}"
+        
+        # 重建SQL查询
+        modified_sql = f"{select_keyword}{select_fields}{from_keyword}{from_tables}{rest_of_query}"
+        
+        logger.info(f"添加了ip_type字段的SQL: {modified_sql[:100]}...")
+        return modified_sql
     
     def _add_ip_address_join(self, sql: str) -> str:
         """添加与ip_address表的关联查询

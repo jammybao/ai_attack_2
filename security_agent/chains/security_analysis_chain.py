@@ -238,211 +238,288 @@ SQL查询: {query}
         return RunnableLambda(dynamic_prompt_chain)
     
     def _analyze_ip_addresses(self, sql_result: str) -> Dict[str, Any]:
-        """分析IP地址信息
+        """分析SQL查询结果中的IP地址
         
         Args:
-            sql_result: SQL查询结果
+            sql_result: SQL查询结果字符串
             
         Returns:
             IP地址分析结果
         """
-        # 使用正则表达式从结果中提取IP地址
-        ip_pattern = r'\b(?:\d{1,3}\.){3}\d{1,3}\b'
-        all_ips = re.findall(ip_pattern, sql_result)
-        
-        if not all_ips:
-            return {
-                "total_ips_found": 0,
-                "unique_ips": [],
-                "frequent_ips": [],
-                "internal_ips": [],
-                "external_ips": []
-            }
-            
-        # 计算每个IP出现的次数
-        ip_counts = {}
-        for ip in all_ips:
-            ip_counts[ip] = ip_counts.get(ip, 0) + 1
-            
-        # 提取内部和外部IP
-        internal_ips = []
-        external_ips = []
-        
-        # 检查SQL结果中是否包含网络类型信息
-        network_type_pattern = r'(\b(?:\d{1,3}\.){3}\d{1,3}\b).*?network_type[\'"]?\s*[=:]?\s*[\'"]?([^\'",\s]*)'
-        ip_network_matches = re.findall(network_type_pattern, sql_result, re.IGNORECASE)
-        
-        # 创建IP到网络类型的映射
-        ip_network_map = {}
-        if ip_network_matches:
-            for ip, network_type in ip_network_matches:
-                # 修改判断逻辑：只有当network_type不为NULL和空值时，才视为内部IP
-                if network_type and network_type.lower() not in ['null', 'none', '']:
-                    ip_network_map[ip] = network_type
-                    internal_ips.append((ip, network_type))
-                else:
-                    # network_type为NULL的IP视为外部IP
-                    external_ips.append(ip)
-                
-            # 将未在映射中的IP视为外部IP（这些是不在ip_address表中的IP）
-            for ip in ip_counts:
-                if ip not in ip_network_map and ip not in external_ips:
-                    external_ips.append(ip)
-        else:
-            # 如果没有网络类型信息，则将所有IP视为外部IP
-            external_ips = list(ip_counts.keys())
-        
-        # 获取出现频率最高的IP
-        sorted_ips = sorted(ip_counts.items(), key=lambda x: x[1], reverse=True)
-        frequent_ips = [(ip, count) for ip, count in sorted_ips[:5]]
-            
-        return {
-            "total_ips_found": len(all_ips),
-            "unique_ips": list(ip_counts.keys()),
-            "frequent_ips": frequent_ips,
-            "internal_ips": internal_ips,
-            "external_ips": external_ips
+        # 默认结果结构
+        result = {
+            "total_ips_found": 0,
+            "unique_ips": set(),
+            "internal_ips": [],  # [(ip, network_type), ...]
+            "external_ips": [],  # [ip, ...]
+            "frequent_ips": []   # [(ip, count), ...]
         }
-    
-    def analyze(self, question: str, sql_query: str, sql_result: str, use_ml: bool = True) -> Dict[str, Any]:
-        """分析SQL查询结果，提取安全信息
+        
+        # 如果结果为空，直接返回
+        if not sql_result or sql_result == "[]" or sql_result == "()":
+            return result
+            
+        try:
+            # 提取IP地址
+            ip_pattern = r'\b(?:\d{1,3}\.){3}\d{1,3}\b'
+            all_ips = re.findall(ip_pattern, sql_result)
+            
+            # 提取源IP和网络类型
+            src_ip_pattern = r"'((?:\d{1,3}\.){3}\d{1,3})',\s+'(?:\d{1,3}\.){3}\d{1,3}'.*?'([^']*?(?:网络|网|内网|生产网)?)'.*?'(internal|external)'"
+            src_ip_matches = re.findall(src_ip_pattern, sql_result)
+            
+            # 提取内部/外部IP信息
+            for match in src_ip_matches:
+                ip = match[0]
+                network_type = match[1]
+                ip_type = match[2]
+                
+                if ip not in result["unique_ips"]:
+                    result["unique_ips"].add(ip)
+                    
+                if ip_type == "internal" or network_type:
+                    # 检查是否已存在
+                    if not any(internal_ip[0] == ip for internal_ip in result["internal_ips"]):
+                        result["internal_ips"].append((ip, network_type))
+                else:
+                    if ip not in result["external_ips"]:
+                        result["external_ips"].append(ip)
+            
+            # 处理未匹配到的IP
+            for ip in all_ips:
+                if ip not in result["unique_ips"]:
+                    result["unique_ips"].add(ip)
+                    
+                    # 简单判断内外部IP
+                    is_internal = False
+                    
+                    # 检查是否匹配典型内部IP模式
+                    internal_patterns = [
+                        r'^10\.',          # 10.0.0.0/8
+                        r'^172\.(1[6-9]|2[0-9]|3[0-1])\.',  # 172.16.0.0/12
+                        r'^192\.168\.'     # 192.168.0.0/16
+                    ]
+                    
+                    for pattern in internal_patterns:
+                        if re.match(pattern, ip):
+                            is_internal = True
+                            break
+                            
+                    if is_internal:
+                        result["internal_ips"].append((ip, "未知"))
+                    else:
+                        result["external_ips"].append(ip)
+            
+            # 统计IP出现频率
+            ip_counts = {}
+            for ip in all_ips:
+                if ip in ip_counts:
+                    ip_counts[ip] += 1
+                else:
+                    ip_counts[ip] = 1
+                    
+            # 获取出现频率最高的IP（最多5个）
+            sorted_ips = sorted(ip_counts.items(), key=lambda x: x[1], reverse=True)
+            result["frequent_ips"] = sorted_ips[:5]
+            
+            # 更新总IP数量 - 只计算唯一IP，不重复计算
+            result["total_ips_found"] = len(result["unique_ips"])
+            
+        except Exception as e:
+            logger.error(f"分析IP地址时出错: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
+            
+        return result
+        
+    def _analyze_ip_by_network_type(self, ip: str, sql_result: str, internal_ips: List[tuple], external_ips: List[str]):
+        """根据network_type分析IP是内部还是外部IP
         
         Args:
-            question: 原始问题
-            sql_query: 生成的SQL查询
+            ip: IP地址
+            sql_result: SQL查询结果字符串
+            internal_ips: 内部IP列表，会被修改
+            external_ips: 外部IP列表，会被修改
+        """
+        # 尝试查找网络类型是否不为NULL且有意义
+        network_type_pattern = r"'{}',.*?'([^']*网)'".format(re.escape(ip))
+        network_type_match = re.search(network_type_pattern, sql_result)
+        
+        if network_type_match and network_type_match.group(1) and "网" in network_type_match.group(1):
+            # 找到有效的network_type，说明是内部IP
+            internal_ips.append((ip, network_type_match.group(1)))
+            logger.info(f"从网络类型识别到内部IP: {ip}, network_type: {network_type_match.group(1)}")
+        else:
+            # 如果没有找到有效的network_type，视为外部IP
+            external_ips.append(ip)
+            logger.info(f"从网络类型识别到外部IP: {ip}")
+    
+    def analyze(self, question: str, sql_query: str, sql_result: str, use_ml: bool = True) -> Dict[str, Any]:
+        """分析SQL查询结果并提供安全分析
+        
+        Args:
+            question: 用户问题
+            sql_query: 执行的SQL查询
             sql_result: SQL查询结果
             use_ml: 是否使用机器学习增强分析
             
         Returns:
             安全分析结果
         """
-        logger.info(f"开始分析SQL查询结果，{'启用' if use_ml and self.ml_chain else '不启用'}机器学习增强")
+        # 分析IP地址信息
+        ip_analysis = self._analyze_ip_addresses(sql_result)
+        logger.info(f"IP分析结果: {ip_analysis}")
         
-        # 基础分析
-        analysis_result = {
-            "risk_level": "低",  # 默认风险等级
-            "key_findings": [],  # 关键发现
-            "recommendations": [],  # 安全建议
-            "detailed_analysis": ""  # 详细分析
+        # 提取事件相关信息
+        event_analysis = self._analyze_events(sql_result)
+        logger.info(f"事件分析结果: {event_analysis}")
+        
+        # 判断安全风险等级
+        risk_level = self._evaluate_risk_level(ip_analysis, event_analysis)
+        logger.info(f"风险等级评估: {risk_level}")
+        
+        # 生成关键发现和建议
+        key_findings, recommendations = self._generate_findings_and_recommendations(
+            ip_analysis, event_analysis, risk_level
+        )
+        
+        # 构建基础安全分析结果
+        security_analysis = {
+            "risk_level": risk_level,
+            "key_findings": key_findings,
+            "recommendations": recommendations,
+            "detailed_analysis": self._format_detailed_analysis(
+                risk_level, key_findings, recommendations, ip_analysis, event_analysis
+            ),
+            "ip_analysis": self._format_ip_analysis(ip_analysis)
         }
         
-        # 分析IP地址
-        ip_analysis = self._analyze_ip_addresses(sql_result)
-        
-        if ip_analysis["total_ips_found"] > 0:
-            # 准备IP分析文本
-            ip_text = f"分析发现{ip_analysis['total_ips_found']}个IP地址，其中唯一IP有{len(ip_analysis['unique_ips'])}个。"
-            
-            # 添加内部/外部IP分类信息
-            if ip_analysis["internal_ips"]:
-                ip_text += f"\n- 内部IP: {len(ip_analysis['internal_ips'])}个"
-                for ip, network_type in ip_analysis["internal_ips"][:5]:
-                    ip_text += f"\n  * {ip} (网络类型: {network_type})"
-                if len(ip_analysis["internal_ips"]) > 5:
-                    ip_text += f"\n  * ...等{len(ip_analysis['internal_ips'])}个"
-                    
-            if ip_analysis["external_ips"]:
-                ip_text += f"\n- 外部IP: {len(ip_analysis['external_ips'])}个"
-                for ip in ip_analysis["external_ips"][:5]:
-                    ip_text += f"\n  * {ip}"
-                if len(ip_analysis["external_ips"]) > 5:
-                    ip_text += f"\n  * ...等{len(ip_analysis['external_ips'])}个"
-                    
-            # 添加高频IP信息
-            if ip_analysis["frequent_ips"]:
-                ip_text += "\n\n出现频率最高的IP:"
-                for ip, count in ip_analysis["frequent_ips"]:
-                    is_internal = any(internal_ip[0] == ip for internal_ip in ip_analysis["internal_ips"])
-                    ip_type = "内部" if is_internal else "外部"
-                    network_type = ""
-                    if is_internal:
-                        for internal_ip, net_type in ip_analysis["internal_ips"]:
-                            if internal_ip == ip:
-                                network_type = f" (网络类型: {net_type})"
-                                break
-                    ip_text += f"\n- {ip}{network_type}: 出现{count}次 [{ip_type}]"
-            
-            analysis_result["ip_analysis"] = ip_text
-            
-            # 修改风险评级逻辑：若存在外部IP，直接将风险等级设置为"高"
-            if ip_analysis["external_ips"]:
-                analysis_result["risk_level"] = "高"
-                analysis_result["key_findings"].append(f"发现外部IP({len(ip_analysis['external_ips'])}个)，存在潜在安全风险")
-                analysis_result["recommendations"].append("立即审查外部IP通信记录，确认是否为授权通信或存在攻击行为")
-            # 保留原有逻辑作为补充
-            else:
-                # 如果外部IP较多，增加风险评级
-                external_ip_ratio = len(ip_analysis["external_ips"]) / (len(ip_analysis["unique_ips"]) or 1)
-                if external_ip_ratio > 0.7 and len(ip_analysis["external_ips"]) > 3:
-                    analysis_result["risk_level"] = "中"
-                    analysis_result["key_findings"].append(f"发现大量外部IP({len(ip_analysis['external_ips'])}个)，可能存在外部通信")
-                    analysis_result["recommendations"].append("建议审查外部IP通信记录，确认是否为授权通信")
-        
-        # 其他基础分析...
-        if "error" in sql_result.lower() or "exception" in sql_result.lower():
-            analysis_result["key_findings"].append("查询结果中包含错误或异常信息")
-            analysis_result["risk_level"] = "中"
-            
-        if "attack" in sql_result.lower() or "exploit" in sql_result.lower():
-            analysis_result["key_findings"].append("查询结果中包含攻击或漏洞利用相关信息")
-            analysis_result["risk_level"] = "高"
-            analysis_result["recommendations"].append("立即调查潜在的攻击活动")
-            
-        # 使用机器学习增强分析
-        if use_ml and self.ml_chain:
+        # 使用机器学习增强安全分析
+        if use_ml:
             logger.info("使用机器学习增强安全分析")
+            security_analysis = self._apply_ml_analysis(question, sql_query, sql_result, security_analysis)
+        
+        return security_analysis
+    
+    def _apply_ml_analysis(
+        self, 
+        question: str, 
+        sql_query: str, 
+        sql_result: str, 
+        security_analysis: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """应用机器学习分析
+        
+        Args:
+            question: 用户问题
+            sql_query: SQL查询
+            sql_result: SQL查询结果
+            security_analysis: 基础安全分析结果
+            
+        Returns:
+            增强后的安全分析结果
+        """
+        try:
+            # 日志调试信息
             print("【调试】开始使用机器学习增强安全分析")
             print(f"【调试】ml_chain是否存在: {self.ml_chain is not None}")
-            try:
-                # 检查各个模型是否存在
-                print(f"【调试】异常检测模型是否存在: {self.ml_chain.anomaly_model.model is not None}")
-                print(f"【调试】攻击链模型是否存在: {self.ml_chain.attack_chain_model.model is not None}")
-                print(f"【调试】IP信誉模型是否存在: {self.ml_chain.ip_reputation_model is not None}")
+            
+            if not self.ml_chain:
+                logger.warning("机器学习链未配置，跳过ML分析")
+                return security_analysis
+            
+            # 使用ML链分析SQL结果
+            ml_results = self.ml_chain.analyze(sql_result)
+            
+            # 检查是否有有效结果
+            if not ml_results:
+                logger.warning("机器学习分析返回空结果")
+                return security_analysis
+            
+            # 检查是否存在异常
+            anomalies = ml_results.get("anomalies", [])
+            if anomalies:
+                # 添加异常信息到安全分析
+                if "key_findings" not in security_analysis:
+                    security_analysis["key_findings"] = []
                 
-                enhanced_result = self.ml_chain.enhance_security_analysis(
-                    sql_result=sql_result,
-                    original_analysis=analysis_result
-                )
+                anomaly_count = len([a for a in anomalies if a.get("is_anomaly", False)])
+                if anomaly_count > 0:
+                    security_analysis["key_findings"].append(
+                        f"机器学习分析发现{anomaly_count}个异常行为模式"
+                    )
+            
+            # 处理IP信誉分析结果
+            ip_reputation = ml_results.get("ip_reputation", {})
+            external_ips = ip_reputation.get("external_src_ips", []) + ip_reputation.get("external_dst_ips", [])
+            
+            if external_ips:
+                # 更新external_ips列表
+                unique_external_ips = set(ip for ip, _ in external_ips)
                 
-                print(f"【调试】增强后的分析结果中是否包含ml_analysis: {'ml_analysis' in enhanced_result}")
-                if 'ml_analysis' in enhanced_result:
-                    print(f"【调试】ml_analysis内容: {enhanced_result['ml_analysis']}")
+                # 更新IP分析信息
+                if "ip_analysis" in security_analysis:
+                    ip_analysis_text = security_analysis["ip_analysis"]
                     
-                analysis_result = enhanced_result
-            except Exception as e:
-                logger.error(f"机器学习增强分析失败: {e}")
-                print(f"【调试】机器学习增强分析失败: {e}")
-                import traceback
-                print(f"【调试】错误详情: {traceback.format_exc()}")
-                # 添加错误信息但继续使用基础分析结果
-                analysis_result["ml_error"] = str(e)
+                    # 如果还没有外部IP信息，添加它
+                    if "外部IP:" not in ip_analysis_text and unique_external_ips:
+                        ip_list_str = ", ".join(list(unique_external_ips)[:5])
+                        if len(unique_external_ips) > 5:
+                            ip_list_str += f"...等{len(unique_external_ips)}个"
+                        
+                        ip_analysis_text += f"\n\n外部IP: {ip_list_str}"
+                        security_analysis["ip_analysis"] = ip_analysis_text
                 
-        # 确保关键发现和建议不超过3条
-        analysis_result["key_findings"] = analysis_result["key_findings"][:3]
-        analysis_result["recommendations"] = analysis_result["recommendations"][:3]
-        
-        # 生成详细分析
-        detailed_analysis = f"安全风险等级: {analysis_result['risk_level']}\n\n"
-        
-        if analysis_result["key_findings"]:
-            detailed_analysis += "关键发现:\n"
-            for i, finding in enumerate(analysis_result["key_findings"]):
-                detailed_analysis += f"{i+1}. {finding}\n"
-                
-        if analysis_result["recommendations"]:
-            detailed_analysis += "\n安全建议:\n"
-            for i, rec in enumerate(analysis_result["recommendations"]):
-                detailed_analysis += f"{i+1}. {rec}\n"
-                
-        if "ip_analysis" in analysis_result:
-            detailed_analysis += f"\nIP地址分析:\n{analysis_result['ip_analysis']}\n"
+                # 添加或更新关键发现
+                if "key_findings" in security_analysis:
+                    # 移除现有的外部IP发现
+                    security_analysis["key_findings"] = [
+                        finding for finding in security_analysis["key_findings"]
+                        if not (isinstance(finding, str) and "外部IP" in finding)
+                    ]
+                    
+                    # 添加新的发现
+                    if unique_external_ips:
+                        security_analysis["key_findings"].append(
+                            f"发现{len(unique_external_ips)}个外部IP，存在潜在安全风险"
+                        )
             
-        if "ml_analysis" in analysis_result:
-            detailed_analysis += f"\n机器学习分析:\n{analysis_result['ml_analysis']}\n"
+            # 处理预测攻击结果
+            predicted_attacks = ml_results.get("predicted_attacks", [])
+            if predicted_attacks:
+                # 添加预测攻击信息
+                security_analysis["predicted_attacks"] = [
+                    {
+                        "target_ip": attack.get("target_ip", "未知"),
+                        "attack_type": attack.get("attack_type", "未知"),
+                        "probability": attack.get("probability", 0) * 100,  # 转为百分比
+                        "timeframe": attack.get("timeframe", "未知")
+                    }
+                    for attack in predicted_attacks[:3]  # 最多取前3个预测
+                ]
+                
+                # 添加预测攻击的关键发现
+                if security_analysis.get("key_findings") and predicted_attacks:
+                    security_analysis["key_findings"].append(
+                        f"预测未来24小时内可能发生{len(predicted_attacks)}种攻击"
+                    )
             
-        analysis_result["detailed_analysis"] = detailed_analysis
-        
-        return analysis_result
+            # 如果ML分析显示风险更高，更新风险级别
+            if (ip_reputation.get("high_risk_count", 0) > 3 or 
+                any(attack.get("probability", 0) > 0.8 for attack in predicted_attacks)):
+                # 提高风险等级
+                if security_analysis["risk_level"] == "低":
+                    security_analysis["risk_level"] = "中"
+                elif security_analysis["risk_level"] == "中":
+                    security_analysis["risk_level"] = "高"
+            
+            # 添加ML分析标记，表示已使用机器学习增强
+            security_analysis["ml_enhanced"] = True
+            
+            return security_analysis
+        except Exception as e:
+            logger.error(f"应用机器学习分析时出错: {str(e)}")
+            return security_analysis
     
     def format_analysis_result(self, analysis: Dict[str, Any]) -> str:
         """将结构化分析结果格式化为可读文本
@@ -494,3 +571,341 @@ SQL查询: {query}
             output += "\n\n---\n*本分析已通过机器学习模型增强*"
             
         return output 
+
+    def _analyze_events(self, sql_result: str) -> Dict[str, Any]:
+        """分析事件相关信息
+        
+        Args:
+            sql_result: SQL查询结果
+            
+        Returns:
+            事件分析结果
+        """
+        events = []
+        high_risk_events = []
+        event_types = set()
+        
+        # 提取事件信息
+        try:
+            # 计算元组数量 - 这是实际记录数
+            tuple_count = sql_result.count("(datetime.datetime")
+            logger.info(f"SQL结果包含 {tuple_count} 条记录")
+            
+            # 查找threat_level和signature
+            threat_pattern = r"'([^']+)',\s+(\d+),\s+'([^']+)'"
+            matches = re.findall(threat_pattern, sql_result)
+            
+            for match in matches:
+                try:
+                    if len(match) >= 3:
+                        ip = match[0]
+                        threat_level = int(match[1])
+                        signature = match[2]
+                        
+                        event = {
+                            "ip": ip,
+                            "threat_level": threat_level,
+                            "signature": signature
+                        }
+                        
+                        events.append(event)
+                        event_types.add(signature)
+                        
+                        if threat_level >= 30:
+                            high_risk_events.append(event)
+                except:
+                    continue
+                    
+            # 匹配另一种模式
+            alt_pattern = r"(\d+),\s+'([^']+)'"
+            alt_matches = re.findall(alt_pattern, sql_result)
+            
+            for match in alt_matches:
+                try:
+                    if len(match) >= 2:
+                        threat_level = int(match[0])
+                        signature = match[1]
+                        
+                        # 查找附近的IP
+                        ip_match = re.search(r"'(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'.*?" + re.escape(match[1]), sql_result)
+                        ip = ip_match.group(1) if ip_match else "未知"
+                        
+                        event = {
+                            "ip": ip,
+                            "threat_level": threat_level,
+                            "signature": signature
+                        }
+                        
+                        # 避免重复
+                        if not any(e["ip"] == ip and e["signature"] == signature for e in events):
+                            events.append(event)
+                            event_types.add(signature)
+                            
+                            if threat_level >= 30:
+                                high_risk_events.append(event)
+                except:
+                    continue
+                    
+            # 限制事件数量与元组数量一致
+            if len(events) > tuple_count:
+                logger.warning(f"提取的事件数量({len(events)})超过实际记录数({tuple_count})，将截断")
+                events = events[:tuple_count]
+                # 重新计算高风险事件
+                high_risk_events = [e for e in events if e["threat_level"] >= 30]
+        except Exception as e:
+            logger.error(f"分析事件信息出错: {str(e)}")
+        
+        # 分类事件类型
+        attack_patterns = {
+            "SQL注入": ["sql", "injection", "注入"],
+            "XSS攻击": ["xss", "cross site", "跨站"],
+            "暴力破解": ["brute force", "bruteforce", "暴力", "字典攻击"],
+            "端口扫描": ["scan", "扫描", "nmap"],
+            "恶意文件": ["malware", "virus", "木马", "恶意软件"],
+            "可疑行为": ["suspicious", "可疑", "异常", "download", "下载"],
+            "权限提升": ["privilege", "escalation", "权限", "提升"],
+            "信息泄露": ["information", "disclosure", "泄露", "泄漏"],
+            "未知攻击": []  # 默认分类
+        }
+        
+        categorized_events = {}
+        for event in events:
+            signature = event["signature"].lower() if isinstance(event["signature"], str) else ""
+            category = "未知攻击"
+            
+            for cat, patterns in attack_patterns.items():
+                if any(pattern in signature for pattern in patterns):
+                    category = cat
+                    break
+            
+            if category not in categorized_events:
+                categorized_events[category] = []
+            categorized_events[category].append(event)
+        
+        return {
+            "total_events": len(events),
+            "high_risk_events": high_risk_events,
+            "event_types": list(event_types),
+            "categorized_events": categorized_events
+        }
+    
+    def _evaluate_risk_level(self, ip_analysis: Dict[str, Any], event_analysis: Dict[str, Any]) -> str:
+        """评估安全风险等级
+        
+        Args:
+            ip_analysis: IP分析结果
+            event_analysis: 事件分析结果
+            
+        Returns:
+            风险等级: 低, 中, 高
+        """
+        risk_level = "低"  # 默认风险等级
+        
+        # 外部IP是关键风险因素
+        external_ip_count = len(ip_analysis["external_ips"])
+        if external_ip_count > 0:
+            logger.info(f"检测到 {external_ip_count} 个外部IP")
+            if external_ip_count > 2:
+                risk_level = "中"
+            else:
+                # 如果只有1-2个外部IP，根据事件类型判断
+                has_dangerous_event = False
+                for event in event_analysis["high_risk_events"]:
+                    if "external" in event.get("ip_type", "").lower():
+                        has_dangerous_event = True
+                        break
+                
+                if has_dangerous_event:
+                    risk_level = "中"
+        
+        # 高风险事件会增加风险，但内部IP的事件风险级别较低
+        high_risk_count = len(event_analysis["high_risk_events"])
+        if high_risk_count > 10 and external_ip_count > 0:
+            risk_level = "高"
+        elif high_risk_count > 20:
+            risk_level = "中"
+            
+        # 特定攻击类型会增加风险
+        dangerous_categories = ["SQL注入", "恶意文件", "权限提升"]
+        has_dangerous_event = False
+        for category in dangerous_categories:
+            if category in event_analysis["categorized_events"]:
+                events = event_analysis["categorized_events"][category]
+                for event in events:
+                    # 检查是否有外部IP的危险事件
+                    ip = event.get("ip", "")
+                    if ip in ip_analysis["external_ips"]:
+                        has_dangerous_event = True
+                        break
+                
+                if has_dangerous_event:
+                    break
+                
+        if has_dangerous_event and external_ip_count > 0:
+            if risk_level == "低":
+                risk_level = "中"
+            elif risk_level == "中":
+                risk_level = "高"
+                    
+        # 记录风险评估结果
+        logger.info(f"风险评估结果: 外部IP数量={external_ip_count}, 高风险事件数量={high_risk_count}, 最终风险等级={risk_level}")
+        return risk_level
+    
+    def _generate_findings_and_recommendations(
+        self, 
+        ip_analysis: Dict[str, Any],
+        event_analysis: Dict[str, Any],
+        risk_level: str
+    ) -> Tuple[List[str], List[str]]:
+        """生成关键发现和建议
+        
+        Args:
+            ip_analysis: IP分析结果
+            event_analysis: 事件分析结果
+            risk_level: 风险等级
+            
+        Returns:
+            关键发现和建议列表
+        """
+        key_findings = []
+        recommendations = []
+        
+        # 外部IP相关发现
+        if ip_analysis["external_ips"]:
+            external_ip_count = len(ip_analysis["external_ips"])
+            key_findings.append(f"发现{external_ip_count}个外部IP，存在潜在安全风险")
+            recommendations.append("立即审查外部IP通信记录，确认是否为授权通信或存在攻击行为")
+            
+        # 高风险事件相关发现
+        if event_analysis["high_risk_events"]:
+            high_risk_count = len(event_analysis["high_risk_events"])
+            key_findings.append(f"发现{high_risk_count}个高风险安全事件，需要注意")
+            
+            # 根据事件类型提供具体建议
+            event_categories = event_analysis["categorized_events"]
+            
+            if "SQL注入" in event_categories:
+                sql_events = event_categories["SQL注入"]
+                if sql_events:
+                    key_findings.append(f"发现{len(sql_events)}次SQL注入攻击尝试")
+                    recommendations.append("检查并加固Web应用的输入验证机制，防止SQL注入")
+                    
+            if "XSS攻击" in event_categories:
+                xss_events = event_categories["XSS攻击"]
+                if xss_events:
+                    key_findings.append(f"发现{len(xss_events)}次XSS攻击尝试")
+                    recommendations.append("加强Web应用的输入过滤，启用内容安全策略(CSP)防止XSS攻击")
+                    
+            if "暴力破解" in event_categories:
+                brute_events = event_categories["暴力破解"]
+                if brute_events:
+                    key_findings.append(f"发现{len(brute_events)}次暴力破解尝试")
+                    recommendations.append("实施账户锁定策略，启用双因素认证，增强密码复杂度要求")
+                    
+            if "恶意文件" in event_categories:
+                malware_events = event_categories["恶意文件"]
+                if malware_events:
+                    key_findings.append(f"发现{len(malware_events)}个恶意文件或下载")
+                    recommendations.append("运行深度扫描，隔离受感染主机，更新杀毒软件和防恶意软件解决方案")
+                    
+        # 根据风险等级添加一般性建议
+        if risk_level == "高":
+            if not recommendations:
+                recommendations.append("立即调查高风险事件，限制受影响系统的网络访问")
+                recommendations.append("通知安全团队，准备事件响应计划")
+        elif risk_level == "中":
+            if not recommendations:
+                recommendations.append("密切监控系统活动，增加日志审计频率")
+                recommendations.append("审查安全策略，确保最佳实践的执行")
+        else:  # 低风险
+            if not recommendations:
+                recommendations.append("继续监控系统活动，保持安全策略的最新状态")
+                
+        # 限制数量
+        key_findings = key_findings[:3]
+        recommendations = recommendations[:3]
+                
+        return key_findings, recommendations
+    
+    def _format_detailed_analysis(
+        self, 
+        risk_level: str, 
+        key_findings: List[str], 
+        recommendations: List[str],
+        ip_analysis: Dict[str, Any],
+        event_analysis: Dict[str, Any]
+    ) -> str:
+        """格式化详细分析内容
+        
+        Args:
+            risk_level: 风险等级
+            key_findings: 关键发现
+            recommendations: 安全建议
+            ip_analysis: IP分析结果
+            event_analysis: 事件分析结果
+            
+        Returns:
+            格式化的详细分析文本
+        """
+        detailed_analysis = f"安全风险等级: {risk_level}\n\n"
+        
+        if key_findings:
+            detailed_analysis += "关键发现:\n"
+            for i, finding in enumerate(key_findings):
+                detailed_analysis += f"{i+1}. {finding}\n"
+                
+        if recommendations:
+            detailed_analysis += "\n安全建议:\n"
+            for i, rec in enumerate(recommendations):
+                detailed_analysis += f"{i+1}. {rec}\n"
+                
+        ip_text = self._format_ip_analysis(ip_analysis)
+        if ip_text:
+            detailed_analysis += f"\nIP地址分析:\n{ip_text}\n"
+            
+        return detailed_analysis
+    
+    def _format_ip_analysis(self, ip_analysis: Dict[str, Any]) -> str:
+        """格式化IP分析结果
+        
+        Args:
+            ip_analysis: IP分析结果
+            
+        Returns:
+            格式化的IP分析文本
+        """
+        if ip_analysis["total_ips_found"] == 0:
+            return ""
+            
+        ip_text = f"分析发现{ip_analysis['total_ips_found']}个IP地址，其中唯一IP有{len(ip_analysis['unique_ips'])}个。"
+        
+        # 添加内部/外部IP分类信息
+        if ip_analysis["internal_ips"]:
+            ip_text += f"\n- 内部IP: {len(ip_analysis['internal_ips'])}个"
+            for ip, network_type in ip_analysis["internal_ips"][:5]:
+                ip_text += f"\n  * {ip} (网络类型: {network_type})"
+            if len(ip_analysis["internal_ips"]) > 5:
+                ip_text += f"\n  * ...等{len(ip_analysis['internal_ips'])}个"
+                
+        if ip_analysis["external_ips"]:
+            ip_text += f"\n- 外部IP: {len(ip_analysis['external_ips'])}个"
+            for ip in ip_analysis["external_ips"][:5]:
+                ip_text += f"\n  * {ip}"
+            if len(ip_analysis["external_ips"]) > 5:
+                ip_text += f"\n  * ...等{len(ip_analysis['external_ips'])}个"
+                
+        # 添加高频IP信息
+        if ip_analysis["frequent_ips"]:
+            ip_text += "\n\n出现频率最高的IP:"
+            for ip, count in ip_analysis["frequent_ips"]:
+                is_internal = any(internal_ip[0] == ip for internal_ip in ip_analysis["internal_ips"])
+                ip_type = "内部" if is_internal else "外部"
+                network_type = ""
+                if is_internal:
+                    for internal_ip, net_type in ip_analysis["internal_ips"]:
+                        if internal_ip == ip:
+                            network_type = f" (网络类型: {net_type})"
+                            break
+                ip_text += f"\n- {ip}{network_type}: 出现{count}次 [{ip_type}]"
+        
+        return ip_text 
