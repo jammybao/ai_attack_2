@@ -162,6 +162,142 @@ class AnomalyDetectionModel(BaseMLModel):
             logger.error(f"计算异常分数失败: {e}")
             return np.zeros(len(data))
 
+    def detect_anomalies(self, data: pd.DataFrame, features: Optional[List[str]] = None) -> Dict[str, Any]:
+        """检测数据中的异常并返回详细结果
+        
+        Args:
+            data: 需要检测的数据 DataFrame
+            features: 用于检测的特征列表，如果为None则使用所有数值列
+            
+        Returns:
+            异常检测结果字典
+        """
+        if data.empty:
+            logger.warning("输入数据为空，无法执行异常检测")
+            return {
+                "anomaly_found": False,
+                "anomaly_count": 0,
+                "anomaly_percentage": 0,
+                "avg_anomaly_score": 0,
+                "top_anomalies": [],
+                "anomaly_samples": []
+            }
+            
+        try:
+            # 如果未指定特征，使用所有数值列
+            if features is None:
+                features = data.select_dtypes(include=['number']).columns.tolist()
+                
+            # 确保至少有一个特征
+            if not features or not all(f in data.columns for f in features):
+                logger.warning(f"未找到指定的特征列: {features}")
+                features = ['threat_level'] if 'threat_level' in data.columns else data.select_dtypes(include=['number']).columns.tolist()[:1]
+                
+            # 如果没有可用特征，返回空结果
+            if not features:
+                logger.warning("没有可用特征进行异常检测")
+                return {
+                    "anomaly_found": False,
+                    "anomaly_count": 0,
+                    "anomaly_percentage": 0,
+                    "avg_anomaly_score": 0,
+                    "top_anomalies": [],
+                    "anomaly_samples": []
+                }
+            
+            # 确保模型存在
+            if self.model is None:
+                logger.info("创建新的异常检测模型")
+                self.model = IsolationForest(n_estimators=100, contamination=0.1, random_state=42)
+                self.scaler = StandardScaler()
+                
+                # 拟合模型
+                X = data[features].fillna(0).values
+                self.scaler.fit(X)
+                X_scaled = self.scaler.transform(X)
+                self.model.fit(X_scaled)
+            
+            # 提取特征
+            X = data[features].fillna(0).values
+            
+            # 数据标准化
+            if self.scaler:
+                X_scaled = self.scaler.transform(X)
+            else:
+                scaler = StandardScaler()
+                X_scaled = scaler.fit_transform(X)
+            
+            # 预测异常
+            predictions = self.model.predict(X_scaled)
+            anomaly_scores = self.model.decision_function(X_scaled)
+            
+            # 计算异常指标
+            anomalies = predictions == -1
+            anomaly_count = np.sum(anomalies)
+            anomaly_percentage = 100 * anomaly_count / len(data) if len(data) > 0 else 0
+            avg_anomaly_score = np.mean(100 * (1 - (anomaly_scores - anomaly_scores.min()) / (anomaly_scores.max() - anomaly_scores.min() + 1e-10)))
+            
+            # 识别top异常
+            top_anomalies = []
+            if anomaly_count > 0:
+                # 创建包含异常分数的数据副本
+                anomaly_df = data.copy()
+                anomaly_df['anomaly'] = anomalies
+                anomaly_df['anomaly_score'] = 100 * (1 - (anomaly_scores - anomaly_scores.min()) / (anomaly_scores.max() - anomaly_scores.min() + 1e-10))
+                
+                # 选择异常记录并按分数排序
+                anomaly_records = anomaly_df[anomaly_df['anomaly']].sort_values('anomaly_score', ascending=False)
+                
+                # 提取前5个异常
+                for _, row in anomaly_records.head(5).iterrows():
+                    anomaly = {}
+                    # 添加IP地址（如果存在）
+                    if 'src_ip' in row:
+                        anomaly['ip'] = row['src_ip']
+                    # 添加风险等级（如果存在）
+                    if 'threat_level' in row:
+                        anomaly['threat_level'] = row['threat_level']
+                    anomaly['is_anomaly'] = True
+                    top_anomalies.append(anomaly)
+            
+            # 识别异常样本描述
+            anomaly_samples = []
+            if anomaly_count > 0:
+                if 'threat_level' in data.columns:
+                    high_threat = data['threat_level'].max() if not data['threat_level'].empty else 0
+                    if high_threat >= 50:
+                        anomaly_samples.append("High threat level detected")
+                
+                if 'dst_ip' in data.columns and len(data['dst_ip'].unique()) < 3 and len(data) > 10:
+                    anomaly_samples.append("Traffic concentrated to few destinations")
+                
+                if 'src_ip' in data.columns and 'ip_type' in data.columns:
+                    external_ips = data[data['ip_type'] == 'external']
+                    if len(external_ips) > 0.6 * len(data):
+                        anomaly_samples.append("High external IP traffic")
+            
+            return {
+                "anomaly_found": anomaly_count > 0,
+                "anomaly_count": int(anomaly_count),
+                "anomaly_percentage": float(anomaly_percentage),
+                "avg_anomaly_score": float(avg_anomaly_score),
+                "top_anomalies": top_anomalies,
+                "anomaly_samples": anomaly_samples
+            }
+        except Exception as e:
+            logger.error(f"检测异常失败: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
+            
+            return {
+                "anomaly_found": False,
+                "anomaly_count": 0,
+                "anomaly_percentage": 0,
+                "avg_anomaly_score": 0,
+                "top_anomalies": [],
+                "anomaly_samples": []
+            }
+
 class IPReputationModel(BaseMLModel):
     """IP信誉评分模型 - 评估IP地址的可信度"""
     
@@ -243,6 +379,122 @@ class IPReputationModel(BaseMLModel):
             IP地址与信誉分数的映射字典
         """
         return {ip: self.get_reputation(ip) for ip in ips}
+
+    def analyze_reputation(self, data: pd.DataFrame) -> Dict[str, Any]:
+        """分析数据中IP的信誉状态
+        
+        Args:
+            data: 包含IP信息的DataFrame
+            
+        Returns:
+            IP信誉分析结果字典
+        """
+        if data.empty:
+            logger.warning("输入数据为空，无法执行IP信誉分析")
+            return {
+                "suspicious_ips_found": False,
+                "suspicious_src_ips": [],
+                "suspicious_dst_ips": [],
+                "internal_src_ips": [],
+                "internal_dst_ips": [],
+                "external_src_ips": [],
+                "external_dst_ips": [],
+                "ip_reputation_scores": {}
+            }
+        
+        try:
+            # 提取源IP和目的IP
+            src_ips = []
+            dst_ips = []
+            
+            if 'src_ip' in data.columns:
+                src_ips = data['src_ip'].unique().tolist()
+            
+            if 'dst_ip' in data.columns:
+                dst_ips = data['dst_ip'].unique().tolist()
+            
+            # 获取所有IP的信誉分数
+            all_ips = set(src_ips + dst_ips)
+            reputation_scores = self.batch_get_reputation(list(all_ips))
+            
+            # 识别可疑IP（分数低于30）
+            suspicious_ips = [(ip, score) for ip, score in reputation_scores.items() if score < 30]
+            suspicious_src_ips = [(ip, score) for ip, score in suspicious_ips if ip in src_ips]
+            suspicious_dst_ips = [(ip, score) for ip, score in suspicious_ips if ip in dst_ips]
+            
+            # 区分内部和外部IP
+            internal_src_ips = []
+            external_src_ips = []
+            internal_dst_ips = []
+            external_dst_ips = []
+            
+            if 'ip_type' in data.columns and 'src_ip' in data.columns:
+                for ip in src_ips:
+                    ip_type = data[data['src_ip'] == ip]['ip_type'].iloc[0] if not data[data['src_ip'] == ip].empty else 'unknown'
+                    network_type = data[data['src_ip'] == ip]['network_type'].iloc[0] if 'network_type' in data.columns and not data[data['src_ip'] == ip].empty else None
+                    
+                    if ip_type == 'internal':
+                        internal_src_ips.append((ip, reputation_scores.get(ip, 50), [network_type] if network_type else []))
+                    else:
+                        external_src_ips.append((ip, reputation_scores.get(ip, 50)))
+            
+            if 'ip_type' in data.columns and 'dst_ip' in data.columns:
+                for ip in dst_ips:
+                    # 查找该IP是否作为源IP出现过，如果是则使用其ip_type
+                    if ip in src_ips:
+                        ip_data = data[data['src_ip'] == ip]
+                        if not ip_data.empty:
+                            ip_type = ip_data['ip_type'].iloc[0]
+                            network_type = ip_data['network_type'].iloc[0] if 'network_type' in ip_data.columns else None
+                        else:
+                            ip_type = 'unknown'
+                            network_type = None
+                    else:
+                        # 检查目标IP是否在所有IP中
+                        ip_data = data[data['dst_ip'] == ip]
+                        if not ip_data.empty and 'ip_type' in ip_data.columns:
+                            ip_type = ip_data['ip_type'].iloc[0]
+                            network_type = ip_data['network_type'].iloc[0] if 'network_type' in ip_data.columns else None
+                        else:
+                            # 如果目标IP不在我们的IP数据中，假定为外部IP
+                            ip_type = 'external'
+                            network_type = None
+                    
+                    if ip_type == 'internal':
+                        internal_dst_ips.append((ip, reputation_scores.get(ip, 50), [network_type] if network_type else []))
+                    else:
+                        external_dst_ips.append((ip, reputation_scores.get(ip, 50)))
+            
+            # 统计高风险IP数量
+            high_risk_count = len([ip for ip, score in reputation_scores.items() if score < 20])
+            
+            return {
+                "suspicious_ips_found": len(suspicious_ips) > 0,
+                "suspicious_src_ips": suspicious_src_ips,
+                "suspicious_dst_ips": suspicious_dst_ips,
+                "internal_src_ips": internal_src_ips,
+                "internal_dst_ips": internal_dst_ips,
+                "external_src_ips": external_src_ips,
+                "external_dst_ips": external_dst_ips,
+                "ip_reputation_scores": reputation_scores,
+                "high_risk_count": high_risk_count
+            }
+        except Exception as e:
+            logger.error(f"分析IP信誉失败: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
+            
+            return {
+                "suspicious_ips_found": False,
+                "suspicious_src_ips": [],
+                "suspicious_dst_ips": [],
+                "internal_src_ips": [],
+                "internal_dst_ips": [],
+                "external_src_ips": [],
+                "external_dst_ips": [],
+                "ip_reputation_scores": {},
+                "high_risk_count": 0
+            }
 
 class AttackChainModel(BaseMLModel):
     """攻击链预测模型 - 预测攻击的下一步行为和攻击链路"""
@@ -347,4 +599,103 @@ class AttackChainModel(BaseMLModel):
             return result
         except Exception as e:
             logger.error(f"攻击概率预测失败: {e}")
-            return {} 
+            return {}
+
+    def predict_attacks(self, data: pd.DataFrame) -> Dict[str, Any]:
+        """预测可能的攻击
+        
+        Args:
+            data: 安全数据DataFrame
+            
+        Returns:
+            攻击预测结果字典
+        """
+        if data.empty:
+            logger.warning("输入数据为空，无法执行攻击预测")
+            return {
+                "attack_patterns_found": False,
+                "attack_probabilities": [],
+                "predicted_attacks": []
+            }
+        
+        try:
+            # 获取唯一的签名类型
+            signatures = []
+            if 'signature' in data.columns:
+                signatures = data['signature'].unique().tolist()
+            
+            # 从签名中提取攻击类型
+            attack_types = set()
+            for sig in signatures:
+                if isinstance(sig, str):
+                    # 提取基本攻击类型
+                    if 'sql' in sig.lower() and ('注入' in sig.lower() or 'injection' in sig.lower()):
+                        attack_types.add("SQL注入")
+                    elif 'xss' in sig.lower():
+                        attack_types.add("XSS攻击")
+                    elif 'scan' in sig.lower() or '扫描' in sig.lower():
+                        attack_types.add("端口扫描")
+                    elif 'brute' in sig.lower() or 'force' in sig.lower() or '暴力' in sig.lower():
+                        attack_types.add("暴力破解")
+                    elif 'malware' in sig.lower() or '恶意软件' in sig.lower() or 'virus' in sig.lower() or '病毒' in sig.lower():
+                        attack_types.add("恶意软件")
+            
+            # 根据攻击类型生成攻击概率
+            attack_probabilities = []
+            for attack_type in attack_types:
+                # 计算这种攻击类型的概率
+                relevant_sigs = [sig for sig in signatures if attack_type.lower() in str(sig).lower()]
+                probability = min(0.85, 0.3 + (len(relevant_sigs) / len(signatures)) * 0.7) if signatures else 0.3
+                attack_probabilities.append((attack_type, probability))
+            
+            # 根据源IP和目标IP预测可能的攻击
+            predicted_attacks = []
+            
+            # 提取频繁通信的IP对
+            ip_pairs = {}
+            if 'src_ip' in data.columns and 'dst_ip' in data.columns:
+                for _, row in data.iterrows():
+                    src = row['src_ip']
+                    dst = row['dst_ip']
+                    pair = (src, dst)
+                    ip_pairs[pair] = ip_pairs.get(pair, 0) + 1
+            
+            # 按频率排序IP对
+            sorted_pairs = sorted(ip_pairs.items(), key=lambda x: x[1], reverse=True)
+            
+            # 生成预测攻击
+            for attack_type, probability in attack_probabilities:
+                # 为每种攻击类型预测一次攻击
+                if sorted_pairs:
+                    # 选择最频繁的IP对
+                    (src_ip, dst_ip), _ = sorted_pairs[0]
+                    
+                    # 创建预测攻击
+                    predicted_attack = {
+                        "target_ip": dst_ip,
+                        "attack_type": attack_type,
+                        "probability": int(probability * 100),
+                        "timeframe": "24小时内"
+                    }
+                    
+                    predicted_attacks.append(predicted_attack)
+                    
+                    # 移除已使用的IP对
+                    if len(sorted_pairs) > 1:
+                        sorted_pairs = sorted_pairs[1:]
+            
+            return {
+                "attack_patterns_found": len(attack_probabilities) > 0,
+                "attack_probabilities": attack_probabilities,
+                "predicted_attacks": predicted_attacks
+            }
+        except Exception as e:
+            logger.error(f"预测攻击失败: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
+            
+            return {
+                "attack_patterns_found": False,
+                "attack_probabilities": [],
+                "predicted_attacks": []
+            } 
